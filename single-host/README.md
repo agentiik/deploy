@@ -46,10 +46,13 @@ The installation's bus identity is in /agentiik/bus.
 ...
 applied 0001_state.sql
 ...
+applied 0031_audit_verified.sql
 agentiik is the role the API and the controller connect as, NOSUPERUSER NOBYPASSRLS
 setup: the namespace demo exists, and the default pool carries zone=local
 setup: the API answers at https://localhost:8443
-This host joined pool default as runner 01K....
+This host joined pool default as runner 01m3ef2wy45ajc2twvwcspmj44.
+Its key is in /var/lib/agentiik/runner.key and its credential in /etc/agentiik/runner.env, both mode 0600 and owned by account agentiik.
+The credential is accepted until 2026-10-26T09:00:06Z.
 ...
 setup: the runner is ready
 setup: Agentiik v0.2.1 is running at https://localhost:8443. Clients trust /srv/agentiik/trust/agentiik.pem.
@@ -109,26 +112,32 @@ steps:
 EOF
 git add agentiik.yaml && git commit -qm "A first workflow"
 agk push --namespace demo
-agk run --namespace demo 2>&1 | tee run.log
-run=$(awk '/ started at / { print $2; exit }' run.log)
+agk run --namespace demo 2>&1 | tee ~/first-run.log
+run=$(awk '/ started at / { print $2; exit }' ~/first-run.log)
 agk status "$run"
 agk logs "$run"
 cd -
 ```
 
 ```text
-alpine:3.21 resolved to alpine@sha256:...
-demo/first-run@1a2b3c4 pushed to https://localhost:8443
+user namespace remapping is off on this daemon and this runner does not require it, so the floor is lifted: ...
+alpine:3.21 resolved to alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+demo/first-run@9d4e925 pushed to https://localhost:8443
 1 step, 1 file, 0 included files, 0 manifests, 1 tag resolved to its digest
-run 01K... of demo/first-run@1a2b3c4 started at https://localhost:8443
-    0.0s  greet  running
-    2.1s  greet  succeeded, out 1
-first-run succeeded in 2.1s: 1 step, 1 container
+run 01M3EF42G80SR9XW17YWGEYTTT of demo/first-run@9d4e925 started at https://localhost:8443
+    0.6s  greet  succeeded, out 1
+first-run succeeded in 0.6s: 1 step, 1 container
 greeting: 1 item
-run 01K...: https://localhost:8443/api/v1/demo/runs/01K...
+run 01M3EF42G80SR9XW17YWGEYTTT: https://localhost:8443/api/v1/demo/runs/01M3EF42G80SR9XW17YWGEYTTT
+run 01M3EF42G80SR9XW17YWGEYTTT: demo/first-run@9d4e925, succeeded after 0.6s
+manual by operator at 2026-09-26T09:00:44Z
+greet  succeeded, out 1 sha256:2ec2167f189f
+output greeting: 1 item
+greet | greet runs on x86_64
+greet | driver: the container exited 0: the output envelopes are published
 ```
 
-`agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as the [Get started](https://agentiik.github.io/docs/#get-started) chapter shows.
+The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows.
 
 ## Operate it
 
