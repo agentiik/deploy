@@ -8,6 +8,7 @@ Every repository of the project carries the same version and is tagged at the sa
 
 ## Unreleased
 
+- An installation made by `setup` up to `v0.2.3` is not upgraded in place: its state is in `AGENTIIK_DATA` on the host, and `v0.2.4` keeps it in Docker volumes. Install `v0.2.4` anew, then remove the old one as its README said.
 - `single-host/`: a `bus` volume holds the control plane's bus credential, which the API renews and the controller reads; upgrading replaces `compose.yaml` rather than only `AGENTIIK_VERSION`.
 - `single-host/`: the API has a health check, `agentiik-api health`, and the runner starts once the API answers.
 - `single-host/` installs `v0.2.4` from `compose.yaml` alone: every default inside it, one optional `.env` applied at each `docker compose up -d`, an `init` service in place of `setup`, `add-runner` and the other files, state in Docker volumes, and `AGENTIIK_PROXY_URL` in place of `AGENTIIK_PUBLIC_URL`.
