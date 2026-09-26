@@ -6,6 +6,16 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## Unreleased
+
+- An installation of `v0.2.4` is not upgraded in place: its state is in Docker volumes, and `v0.2.5` keeps it in `AGENTIIK_DATA`. Remove it as its README said, then start anew.
+- `single-host/`: NATS is off the host's network and publishes its bus port alone, `AGENTIIK_BUS_PORT`, so a program of the host on 8222 no longer stops it.
+- `single-host/`, `runner/`: the state is in `AGENTIIK_DATA`, `./data` beside `compose.yaml` by default, one directory per service; PostgreSQL's socket alone stays a Docker volume.
+- `single-host/`: `AGENTIIK_OPERATOR_TOKEN` is required in `.env`, and `docker compose up` refuses to start without it.
+- `single-host/README.md`: the start is one block to paste, and backing up and removing follow `data/`.
+- `runner/`: the runner is off the host's network, which it does not need.
+- The single-host workflow checks the refusal without a token, runs the README with port 8222 held on the host, and checks what `data/` holds after the start, the backup and the removal.
+
 ## v0.2.4, 2026-09-26
 
 - An installation made by `setup` up to `v0.2.3` is not upgraded in place: its state is in `AGENTIIK_DATA` on the host, and `v0.2.4` keeps it in Docker volumes. Install `v0.2.4` anew, then remove the old one as its README said.

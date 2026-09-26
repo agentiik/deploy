@@ -2,7 +2,7 @@
 # workflow run on it, a setting changed, a runner added on a second machine, then the installation
 # backed up and removed. The commands are the README's own: every fenced block that follows a
 # <!-- ci --> line, run in order in one shell, so the guide and the test cannot drift apart. It runs
-# three ways: with compose.yaml alone and no .env, with a .env, and behind Caddy. A block marked
+# three ways: as the README's Start (none), on a server (direct), and behind Caddy (proxy). A block marked
 # <!-- ci: MODE ... --> runs in the modes it names, one marked <!-- ci: other machine --> runs on the
 # second machine, and <!-- ci: check NAME --> sources .github/single-host/NAME.sh at that point.
 name: single-host
@@ -39,13 +39,17 @@ jobs:
           cache: false
 
       # Each Compose file as Compose reads it: alone, with its .env.example as .env, and behind a
-      # proxy. The runner's has no default for the installation's address, and says so.
+      # proxy. Neither has a default for what only its user can give, the operator token and the
+      # installation's address, and each says so; .env.example leaves the token for the user to fill.
       - name: Lint
         run: |
           shellcheck .github/single-host/*.sh
-          (cd single-host && docker compose config --quiet)
-          (cd single-host && AGENTIIK_PROXY_URL=https://agentiik.example.com docker compose config --quiet)
-          (cd single-host && cp .env.example .env && docker compose config --quiet && rm .env)
+          token=$(openssl rand -hex 32)
+          (cd single-host && if docker compose config --quiet 2>"$RUNNER_TEMP/err"; then exit 1; fi; grep 'set AGENTIIK_OPERATOR_TOKEN in .env' "$RUNNER_TEMP/err")
+          (cd single-host && AGENTIIK_OPERATOR_TOKEN=$token docker compose config --quiet)
+          (cd single-host && AGENTIIK_OPERATOR_TOKEN=$token AGENTIIK_PROXY_URL=https://agentiik.example.com docker compose config --quiet)
+          (cd single-host && cp .env.example .env && ! docker compose config --quiet 2>/dev/null)
+          (cd single-host && sed -i "s/^AGENTIIK_OPERATOR_TOKEN=\$/AGENTIIK_OPERATOR_TOKEN=$token/" .env && docker compose config --quiet && rm .env)
           (cd runner && ! docker compose config --quiet 2>/dev/null)
           (cd runner && cp .env.example .env && docker compose config --quiet && rm .env)
 
@@ -76,8 +80,8 @@ jobs:
       # machines reach: here the address of this machine's network interface, which the second
       # machine reaches and which is not the loopback. Behind the proxy, the README's
       # agentiik.example.com is that address too, which Caddy serves with a certificate from its own
-      # authority, as it does for any IP address. With no .env, the host is localhost, which no
-      # other machine reaches, so that mode adds no runner elsewhere.
+      # authority, as it does for any IP address. As in the README's Start, the host is localhost,
+      # which no other machine reaches, so that mode adds no runner elsewhere.
       - name: Name the installation
         run: |
           host_ip=$(hostname -I | awk '{ print $1 }')
@@ -87,6 +91,27 @@ jobs:
           else
             echo "REMOTE_SERVER=https://$host_ip:8443" >> "$GITHUB_ENV"
           fi
+
+      # compose.yaml alone, with no .env, is refused before anything starts, and the refusal says what
+      # to set, since the operator token is the one setting with no default.
+      - name: Refuse to start with no operator token
+        if: matrix.mode == 'none'
+        run: |
+          mkdir -p "$RUNNER_TEMP/no-token" && cp single-host/compose.yaml "$RUNNER_TEMP/no-token/"
+          cd "$RUNNER_TEMP/no-token"
+          if docker compose up -d 2>"$RUNNER_TEMP/err"; then echo "docker compose up started with no operator token" >&2; exit 1; fi
+          cat "$RUNNER_TEMP/err"
+          grep -q 'set AGENTIIK_OPERATOR_TOKEN in .env' "$RUNNER_TEMP/err"
+          [ -z "$(docker ps --all --quiet)" ]
+
+      # A program of the host on NATS's monitoring port, which v0.2.4 took on the host's network and
+      # could not start beside: the bus now publishes its bus port alone, so the README runs with it held.
+      - name: Hold port 8222 on the host
+        if: matrix.mode == 'none'
+        run: |
+          python3 -m http.server 8222 --bind 127.0.0.1 >/dev/null 2>&1 &
+          for _ in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:8222/ && break; sleep 1; done
+          curl -fs -o /dev/null http://127.0.0.1:8222/
 
       # The other machine of "Add a runner on another machine": a Docker daemon of its own, in a
       # container on the default bridge, which reaches this machine's address and not its loopback.
@@ -145,9 +170,7 @@ jobs:
           # a command's output are the README's idiom, and set -e stops the run on either first.
           shellcheck --shell=bash --exclude=SC2164,SC1091,SC2155 "$RUNNER_TEMP/readme.sh"
 
-      # -v prints each line as it is read, before expansion, so a token set in .env is never shown.
-      # One init mints is printed by docker compose logs init, as the README says; this installation
-      # is reached by nothing outside this machine, and is removed before the job ends.
+      # -v prints each line as it is read, before expansion, so the token written in .env is never shown.
       - name: Run the README
         run: cd ~ && bash -veuo pipefail "$RUNNER_TEMP/readme.sh"
 

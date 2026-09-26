@@ -1,6 +1,7 @@
-# Agentiik on one Linux host: docker compose up -d, with this file alone or with a .env beside it.
-# Every setting is a ${AGENTIIK_...:-default} below, and .env.example says what each one is for.
-# Change one in .env and run docker compose up -d again: every service that reads it is recreated.
+# Agentiik on one Linux host: docker compose up -d, with a .env beside this file that sets
+# AGENTIIK_OPERATOR_TOKEN. Every other setting is a ${AGENTIIK_...:-default} below, and .env.example
+# says what each one is for. Change one in .env and run docker compose up -d again: every service
+# that reads it is recreated. The state is kept in AGENTIIK_DATA, ./data beside this file by default.
 # https://github.com/agentiik/deploy/tree/main/single-host is the guide.
 name: agentiik
 
@@ -28,12 +29,11 @@ services:
 
   # Runs at every docker compose up, and brings the installation in line with the settings: the
   # certificate for AGENTIIK_HOST, the keys, the bus identity, the migration, the namespace, the
-  # operator token's hash and a join token for the runner. Its log prints the certificate, and the
-  # operator token where it minted one.
+  # operator token's hash and a join token for the runner. Its log says what it did.
   init:
-    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.2.4}
+    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.2.5}
     command: [init]
-    user: "0:0" # to give each service's volume to the account that service runs as
+    user: "0:0" # to give each service's directory to the account that service runs as
     network_mode: none
     userns_mode: host
     restart: "no"
@@ -42,7 +42,7 @@ services:
       AGK_INIT_DIR: /init
       AGK_INIT_HOST: ${AGENTIIK_HOST:-localhost}
       AGK_INIT_NAMESPACE: ${AGENTIIK_NAMESPACE:-demo}
-      AGK_OPERATOR_TOKEN: ${AGENTIIK_OPERATOR_TOKEN:-} # empty, init mints one where it stored none
+      AGK_OPERATOR_TOKEN: ${AGENTIIK_OPERATOR_TOKEN:?set AGENTIIK_OPERATOR_TOKEN in .env to 32 characters or more, such as openssl rand -hex 32 writes}
       AGK_MIGRATE_DATABASE_URL: postgres://postgres@/agentiik?host=/run/postgresql
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
     volumes:
@@ -70,7 +70,7 @@ services:
 
   api:
     <<: *agentiik
-    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.2.4}
+    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.2.5}
     depends_on: { <<: *after-init, nats: { condition: service_healthy } }
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
@@ -99,7 +99,7 @@ services:
 
   controller:
     <<: *agentiik
-    image: ghcr.io/agentiik/controller:${AGENTIIK_VERSION:-v0.2.4}
+    image: ghcr.io/agentiik/controller:${AGENTIIK_VERSION:-v0.2.5}
     depends_on: { <<: *after-init, nats: { condition: service_healthy } }
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
@@ -118,7 +118,7 @@ services:
   # the pool default with the token init wrote where it has no identity yet, or where AGK_API changed.
   runner:
     <<: *agentiik
-    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.2.4}
+    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.2.5}
     depends_on: { <<: *after-init, api: { condition: service_healthy } }
     cap_drop: [ALL]
     cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
@@ -139,7 +139,7 @@ services:
       - "${AGENTIIK_DATA:-./data}/runner:/etc/agentiik" # init's certificate and join token, and the identity join writes
       - "${AGENTIIK_DATA:-./data}/runner-state:/var/lib/agentiik" # the runner's key and credential
       # The work root, at the same path on both sides, since the daemon resolves the bind sources
-      # of every step's container on this host. The one path on the host this file names.
+      # of every step's container on this host. The one path outside AGENTIIK_DATA this file names.
       - /var/lib/agentiik/work:/var/lib/agentiik/work
 
 configs:
