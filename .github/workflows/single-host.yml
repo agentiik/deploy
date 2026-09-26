@@ -6,7 +6,7 @@ name: single-host
 
 on:
   push:
-    branches: [main]
+    branches: [main, single-host]
   pull_request:
   workflow_dispatch:
 
