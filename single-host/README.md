@@ -74,7 +74,7 @@ export AGENTIIK_TOKEN
 `setup` prepares everything the host needs once, then starts the installation. It says what it does on standard error, and prints the operator token on standard output, which the line above keeps in your shell and nowhere else:
 
 ```text
-setup: installing Agentiik v0.2.1 at https://localhost:8443, keeping its state in /srv/agentiik
+setup: installing Agentiik v0.2.2 at https://localhost:8443, keeping its state in /srv/agentiik
 setup: the secrets tmpfs is mounted at /run/agentiik/secrets, and /etc/fstab mounts it at boot
 setup: made a certificate for DNS:localhost,IP:127.0.0.1, valid 825 days
 setup: wrote the master key, the presign key, the database password and a new operator token's hash
@@ -92,7 +92,7 @@ Its key is in /var/lib/agentiik/runner.key and its credential in /etc/agentiik/r
 The credential is accepted until 2026-10-26T09:00:06Z.
 ...
 setup: the runner is ready
-setup: Agentiik v0.2.1 is running at https://localhost:8443. Clients trust /etc/agentiik/trust/agentiik.pem.
+setup: Agentiik v0.2.2 is running at https://localhost:8443. Clients trust /etc/agentiik/trust/agentiik.pem.
 ```
 
 The operator token is the one credential of a v0.2 installation: it may do everything, and only its SHA-256 is written down. Save it in a password manager now, `echo "$AGENTIIK_TOKEN"`. Lost, it is replaced by running `sudo ./setup` again, which keeps everything else and mints a new one.
@@ -104,18 +104,18 @@ docker compose ps
 
 ```text
 NAME                    IMAGE                                COMMAND                  SERVICE      STATUS
-agentiik-api-1          ghcr.io/agentiik/api:v0.2.1          "/agentiik-api serve"    api          Up
-agentiik-controller-1   ghcr.io/agentiik/controller:v0.2.1   "/agentiik-controller"   controller   Up
+agentiik-api-1          ghcr.io/agentiik/api:v0.2.2          "/agentiik-api serve"    api          Up
+agentiik-controller-1   ghcr.io/agentiik/controller:v0.2.2   "/agentiik-controller"   controller   Up
 agentiik-nats-1         nats:2-alpine                        "docker-entrypoint.s…"   nats         Up (healthy)
 agentiik-postgres-1     postgres:17-alpine                   "docker-entrypoint.s…"   postgres     Up (healthy)
-agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.1       "/usr/local/bin/agk-…"   runner       Up
+agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.2       "/usr/local/bin/agk-…"   runner       Up
 ```
 
 ## Point agk at it
 
 <!-- ci -->
 ```sh
-go install github.com/agentiik/agentiik/cmd/agk@v0.2.1
+go install github.com/agentiik/agentiik/cmd/agk@v0.2.2
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
