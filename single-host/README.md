@@ -213,7 +213,7 @@ Download the new release's `compose.yaml` in place of the old one, since a relea
 docker compose up -d --wait
 ```
 
-`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed.
+`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the operator token, the runs made before and the runner still work.
 
 An installation of v0.2.4 kept its state in Docker volumes rather than `data/`, and is not upgraded in place: remove it as its README said, then start anew.
 
