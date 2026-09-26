@@ -1,0 +1,127 @@
+# The single-host installation, installed as its README says on a fresh Ubuntu machine, a first
+# workflow run on it, then the installation stopped, started, backed up and removed. The commands
+# are the README's own: every fenced block that follows a <!-- ci --> line, run in order in one
+# shell, so the guide and the test cannot drift apart.
+name: single-host
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: single-host-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  readme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Lint
+        run: |
+          (cd single-host && shellcheck -x setup add-runner runner-host.sh)
+          cp single-host/.env.example single-host/.env
+          echo DOCKER_GID=0 >> single-host/.env
+          docker compose -f single-host/compose.yaml config --quiet
+          docker compose -f single-host/compose.yaml -f single-host/compose.build.yaml config --quiet
+          rm single-host/.env
+
+      # What a person following the README already has: a git identity to commit the workflow with.
+      - name: Git identity
+        run: |
+          git config --global user.name "Single-host test"
+          git config --global user.email "single-host@agentiik.invalid"
+
+      # The README names the version .env.example pins. Until its images are on ghcr.io and its tag
+      # exists, the test builds them from the source of main instead, through the README's own
+      # optional override, and installs agk from main: the one variable a user may change, changed
+      # here and nowhere else. Once the version is published this step changes nothing, and the
+      # README runs verbatim.
+      - name: Choose what to install
+        working-directory: single-host
+        run: |
+          version=$(sed -n 's/^AGENTIIK_VERSION=//p' .env.example)
+          if docker manifest inspect "ghcr.io/agentiik/api:$version" >/dev/null 2>&1 &&
+             git ls-remote --exit-code --tags https://github.com/agentiik/agentiik.git "refs/tags/$version" >/dev/null; then
+            echo "Installing $version as published"
+            echo "PUBLISHED=$version" >> "$GITHUB_ENV"
+          else
+            echo "$version is not published yet: building main from source"
+            sed -i "s/^AGENTIIK_VERSION=.*/AGENTIIK_VERSION=main/; s/^#COMPOSE_FILE=/COMPOSE_FILE=/" .env.example
+            echo "UNPUBLISHED=$version" >> "$GITHUB_ENV"
+          fi
+
+      # A runner reaches the installation at AGENTIIK_HOST, which a user sets to the name other
+      # machines reach: here the address of this machine's network interface, which the second
+      # machine below reaches and which is not the loopback.
+      - name: Name the installation
+        working-directory: single-host
+        run: |
+          host_ip=$(hostname -I | awk '{ print $1 }')
+          sed -i "s/^AGENTIIK_HOST=.*/AGENTIIK_HOST=$host_ip/" .env.example
+          echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
+
+      # The other machine of "Add a runner on another machine": a Docker daemon of its own, in a
+      # container on the default bridge, which reaches this machine's address and not its loopback.
+      # It has what the README asks of a Linux machine: bash, sudo, and this repository.
+      - name: Start another machine
+        run: |
+          docker run --detach --privileged --name machine2 docker:29-dind
+          for _ in $(seq 60); do docker exec machine2 docker version >/dev/null 2>&1 && break; sleep 1; done
+          docker exec machine2 apk add --no-cache --quiet bash sudo coreutils
+          docker cp single-host machine2:/root/single-host
+
+      - name: Extract the README's commands
+        run: |
+          # A block marked for the other machine runs there, after what the README has the user
+          # carry over by hand: the certificate, and the runner image where it was built here.
+          awk '
+            /^<!-- ci -->$/ { take = 1; next }
+            /^<!-- ci: other machine -->$/ { take = 1; other = 1; next }
+            take && /^```/ {
+              if (!inside) {
+                inside = 1
+                if (other) {
+                  print "docker cp /etc/agentiik/trust/agentiik.pem machine2:/root/single-host/agentiik.pem"
+                  print "image=ghcr.io/agentiik/runner:$(sed -n \"s/^AGENTIIK_VERSION=//p\" .env)"
+                  print "if docker image inspect \"$image\" >/dev/null 2>&1; then docker save \"$image\" | docker exec -i machine2 docker load; fi"
+                  print "docker exec -i -e JOIN_TOKEN=\"$JOIN_TOKEN\" -e AGENTIIK_SERVER=\"https://$HOST_IP:8443\" -w /root/single-host machine2 bash -veuo pipefail <<'\''OTHER_MACHINE'\''"
+                }
+              } else {
+                if (other) print "OTHER_MACHINE"
+                inside = 0; take = 0; other = 0; print ""
+              }
+              next
+            }
+            inside { print }
+          ' single-host/README.md > "$RUNNER_TEMP/readme.sh"
+          if [ -n "${UNPUBLISHED:-}" ]; then
+            sed -i "s|cmd/agk@$UNPUBLISHED|cmd/agk@main|" "$RUNNER_TEMP/readme.sh"
+          fi
+          cat "$RUNNER_TEMP/readme.sh"
+
+      # -v prints each line as it is read, before expansion, so the operator token is never shown.
+      - name: Run the README
+        working-directory: single-host
+        run: bash -veuo pipefail "$RUNNER_TEMP/readme.sh"
+
+      - name: Logs of what failed
+        if: failure()
+        working-directory: single-host
+        run: |
+          sudo docker compose ps --all || true
+          sudo docker compose logs --no-color --tail 200 || true
+          docker exec machine2 docker logs agentiik-runner || true
