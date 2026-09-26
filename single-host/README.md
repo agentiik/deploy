@@ -1,132 +1,156 @@
 # Agentiik on a single host
 
-One Linux machine runs the whole installation with Docker Compose: PostgreSQL, the NATS bus, the API, the controller and one runner. It is [Profile A](https://agentiik.github.io/docs/#profile-a-a-single-host) of the documentation, for a homelab, a small team, or reproducing an incident. Nothing is redundant, on purpose.
+One Linux machine runs the whole installation from one file, [`compose.yaml`](compose.yaml): PostgreSQL, the NATS bus, the API, the controller, one runner, and `init`, which prepares the rest at every start. It is [Profile A](https://agentiik.github.io/docs/#profile-a-a-single-host) of the documentation, for a homelab, a small team, or reproducing an incident. Nothing is redundant, on purpose.
 
-Every command below is run, exactly as written here, on a fresh Ubuntu machine by [the single-host workflow](../.github/workflows/single-host.yml) on every change.
+Every command below is run, exactly as written here, on a fresh Ubuntu machine by [the single-host workflow](../.github/workflows/single-host.yml) on every change: with no `.env`, with one, and behind Caddy.
 
 ## What you need
 
 | | |
 | --- | --- |
-| A Linux host, x86-64 or arm64 | macOS and Windows are not runner hosts: the runner hands the Docker daemon paths on the host to bind, which Docker Desktop's virtual machine cannot see. `agk` runs anywhere. |
-| Docker Engine 28 or later, with the Compose plugin | Every component is a container, and so is every step of every workflow. |
-| `sudo`, `openssl`, `curl`, `git` | `setup` writes under `/etc`, `/var/lib`, `/run` and `/srv`, and makes the certificate and the keys. |
-| Ports 8443 and 4222 open, and 8222 free on the loopback | The API serves HTTPS on 8443 (`AGENTIIK_PORT`) to `agk` and to every runner, and the bus listens on 4222 for every runner, both on every interface: open them to the machines that reach the installation, and to nothing else. Behind a reverse proxy, the proxy's 443 takes the place of 8443, which then listens on the loopback alone. The bus's health check listens on `127.0.0.1:8222` alone. |
+| A Linux host, x86-64 or arm64 | The runner hands the Docker daemon paths on the host to bind, which Docker Desktop's virtual machine cannot see. `agk` runs anywhere. |
+| Docker Engine 28 or later, with Compose 2.24 or later | Every component is a container, and so is every step of every workflow. Compose 2.24 reads the inline `configs` and `depends_on.restart` the file uses. |
+| `curl`, `openssl`, `git`, `sudo` | To download the file, choose a token and commit a workflow; `sudo` only to remove the runner's work root, which its account owns. |
+| Ports 8443 and 4222 open, 8222 free on the loopback | The API serves HTTPS on 8443 and the bus listens on 4222, both on every interface: open them to the machines that reach the installation, and nothing else. Behind a proxy, its 443 takes the place of 8443, which then listens on the loopback alone. |
 | Go 1.27, or Homebrew, where you run `agk` | To install the command line. `agk push` also needs a Docker daemon, to resolve image tags to digests. |
 
 ## Install
 
-```sh
-git clone https://github.com/agentiik/deploy.git
-cd deploy/single-host
-```
+In a directory of its own:
 
 <!-- ci -->
 ```sh
-cp .env.example .env
+mkdir -p ~/agentiik && cd ~/agentiik
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.2.4/single-host/compose.yaml
 ```
 
-`.env` holds the choices this host makes. The one to change first is `AGENTIIK_HOST`, the name `agk` and every runner reach the API and the bus at, which the certificate is issued to; `localhost` works for trying it on one machine, and a runner on another machine needs a name or an address that machine reaches. `AGENTIIK_VERSION` is the one variable that picks what runs, and every other file follows it.
+That file is the installation, and it runs as it is: every setting has its default in it. To change one, write it in a `.env` beside it; [`.env.example`](.env.example) lists them all and says why each is what it is. The one to change first is `AGENTIIK_HOST`, the name `agk` and every runner reach the installation at: `localhost` is enough on one machine, and a runner on another machine needs a name or an address it reaches. The operator token is yours to choose, too, where you would rather not have one minted:
+
+<!-- ci: direct -->
+```sh
+echo 'AGENTIIK_HOST=agentiik.example.com' > .env
+echo "AGENTIIK_TOKEN=$(openssl rand -hex 32)" >> .env
+```
 
 ### Behind a reverse proxy
 
-Where a reverse proxy terminates TLS in front of the API with a certificate of its own, one line of `.env` says so, `AGENTIIK_PUBLIC_URL`, and the proxy starts before `setup`. Caddy, in a container on this host:
+Where a reverse proxy on this host terminates TLS in front of the API, `AGENTIIK_PROXY_URL` names its address. The API then serves plain HTTP on `127.0.0.1:8443` alone, for the proxy to forward to, and every address it hands out is minted on that URL. The bus is NATS rather than HTTP, so it is not proxied: it keeps its own TLS on 4222, at `AGENTIIK_HOST`. Caddy, in a container:
 
 <!-- ci: proxy -->
 ```sh
-sed -i 's|^AGENTIIK_HOST=.*|AGENTIIK_HOST=agentiik.example.com|; s|^AGENTIIK_PUBLIC_URL=.*|AGENTIIK_PUBLIC_URL=https://agentiik.example.com|' .env
-docker run --detach --name caddy --restart unless-stopped --network host --env-file .env \
-  -v "$PWD/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" -v caddy-data:/data caddy:2
-export AGENTIIK_SERVER=https://agentiik.example.com
-export SSL_CERT_DIR=/etc/agentiik/trust
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.2.4/single-host/proxy/Caddyfile
+echo 'AGENTIIK_HOST=agentiik.example.com' > .env
+echo 'AGENTIIK_PROXY_URL=https://agentiik.example.com' >> .env
+docker run --detach --name caddy --restart unless-stopped --network host -e AGENTIIK_PROXY_URL=https://agentiik.example.com \
+  -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -v caddy-data:/data caddy:2
 ```
 
-`AGENTIIK_PUBLIC_URL` is the address `agk`, every runner and every presigned URL use, and the API serves plain HTTP on `127.0.0.1:8443` (`AGENTIIK_PORT`) alone, for the proxy to forward to. `AGENTIIK_HOST` stays the name runners reach the bus at, usually the same one: the bus speaks NATS rather than HTTP, so it is not proxied, and keeps its own TLS on 4222 with the certificate `setup` makes.
-
-Only where the proxy's certificate is from an authority the system does not trust, such as Caddy's own for an IP address or a name like `agentiik.internal`, does that authority join `/etc/agentiik/trust`, where the runner and `agk` look, and `curl` trust it too:
+Where the proxy's certificate is from an authority the system does not trust, such as Caddy's own for an IP address or a name like `agentiik.internal`, `AGENTIIK_CA` hands it to the runner, and `trust/` keeps it for `agk` and `curl`:
 
 <!-- ci: proxy -->
 ```sh
-sudo mkdir -p /etc/agentiik/trust
-docker exec caddy sh -c 'until [ -s /data/caddy/pki/authorities/local/root.crt ]; do sleep 1; done; cat /data/caddy/pki/authorities/local/root.crt' |
-  sudo tee /etc/agentiik/trust/proxy.pem >/dev/null
-export CURL_CA_BUNDLE=/etc/agentiik/trust/proxy.pem
+mkdir -p trust
+docker exec caddy sh -c 'until [ -s /data/caddy/pki/authorities/local/root.crt ]; do sleep 1; done; cat /data/caddy/pki/authorities/local/root.crt' > trust/proxy.pem
+echo "AGENTIIK_CA=\"$(cat trust/proxy.pem)\"" >> .env
 ```
 
-| Proxy | Files in `proxy/` | Where they go |
+| Proxy | Files in [`proxy/`](proxy/) | Where they go |
 | --- | --- | --- |
-| Caddy | `Caddyfile` | Mounted as above, or `/etc/caddy/Caddyfile` with `AGENTIIK_PUBLIC_URL` in Caddy's environment. Caddy obtains and renews the certificate itself. |
+| Caddy | `Caddyfile` | Mounted as above, with `AGENTIIK_PROXY_URL` in Caddy's environment. Caddy obtains and renews the certificate itself. |
 | nginx | `nginx.conf` | `/etc/nginx/conf.d/agentiik.conf`, with your name and certificate in place of `agentiik.example.com`. |
 | Traefik | `traefik.yaml`, `traefik-agentiik.yaml` | `/etc/traefik/`, with your name and an address for Let's Encrypt in place of the examples. |
 
-Each sets what the API needs of a proxy: a step's log stream passed on as it is written, with no timeout under an hour; the path passed undecoded, since an artifact's URI is one segment whose slashes are `%2F`; and no body size limit, since a runner uploads artifacts of up to 5 GiB and the API bounds each route itself. The API reads no `X-Forwarded-*` header: every address it hands out is minted on `AGENTIIK_PUBLIC_URL`.
+Each passes a step's log stream on as it is written, the path undecoded (an artifact's URI is one segment whose slashes are `%2F`), and bodies of any size (a runner uploads artifacts of up to 5 GiB). Open the proxy's 443 and the bus's 4222, and nothing else.
 
-Open the proxy's 443 and the bus's 4222 to the machines that reach the installation, and nothing else: 8443 listens on the loopback alone. A runner on another machine trusts the proxy's certificate for the API through the system's own authorities, or `proxy.pem` above, and `agentiik.pem`, which `setup` makes, for the bus.
-
-### Start it
+## Start it
 
 <!-- ci -->
 ```sh
-AGENTIIK_TOKEN="$(sudo ./setup)"
+docker compose up -d --wait
+docker compose logs init
+```
+
+`init` runs first at every `docker compose up`, and the other services wait for it. Its log says what it did, and prints the certificate the bus serves, and the API where no proxy is in front, which clients elsewhere trust:
+
+```text
+init-1  | made a certificate for localhost, 127.0.0.1, valid 825 days, since there was none
+init-1  | clients trust this certificate, which the bus serves, and the API where no proxy is in front:
+init-1  | -----BEGIN CERTIFICATE-----
+init-1  | ...
+init-1  | created the installation's bus identity
+init-1  | applied 0001_state.sql
+init-1  | ...
+init-1  | created namespace demo
+init-1  | wrote a join token of the pool default for the runner, which it uses where it has to join, until 2026-10-01T10:00:00Z
+init-1  | minted an operator token, since AGK_OPERATOR_TOKEN is not set and none was stored. It is shown this once, and only its hash is kept: ...
+init-1  |
+init-1  |   agk_op_3f5c...
+```
+
+The operator token is the one credential of a v0.2 installation, and it may do everything. Where `.env` sets none, `init` minted one and printed it last, once: keep it in a password manager now, since only its hash is written down. Lost, [a new one](#change-a-setting) in `.env` replaces it.
+
+<!-- ci: none proxy -->
+```sh
+AGENTIIK_TOKEN=$(docker compose logs init | grep -o 'agk_op_[0-9a-f]*' | tail -n 1)
 export AGENTIIK_TOKEN
 ```
 
-`setup` prepares everything the host needs once, then starts the installation. It says what it does on standard error, and prints the operator token on standard output, which the line above keeps in your shell and nowhere else:
+Where `.env` sets it, it is that one:
 
-```text
-setup: installing Agentiik v0.2.3 at https://localhost:8443, keeping its state in /srv/agentiik
-setup: the secrets tmpfs is mounted at /run/agentiik/secrets, and /etc/fstab mounts it at boot
-setup: made a certificate for DNS:localhost,IP:127.0.0.1, valid 825 days
-setup: wrote the master key, the presign key, the database password and a new operator token's hash
-setup: pulling the images
-The installation's bus identity is in /agentiik/bus.
-...
-applied 0001_state.sql
-...
-applied 0031_audit_verified.sql
-agentiik is the role the API and the controller connect as, NOSUPERUSER NOBYPASSRLS
-created namespace demo
-setup: the API answers at https://localhost:8443
-This host joined pool default as runner 01m3ef2wy45ajc2twvwcspmj44.
-Its key is in /var/lib/agentiik/runner.key and its credential in /etc/agentiik/runner.env, both mode 0600 and owned by account agentiik.
-The credential is accepted until 2026-10-26T09:00:06Z.
-...
-setup: the runner is ready
-setup: Agentiik v0.2.3 is running at https://localhost:8443. Clients trust /etc/agentiik/trust/agentiik.pem.
+<!-- ci: direct -->
+```sh
+export "$(grep '^AGENTIIK_TOKEN=' .env)"
 ```
-
-The operator token is the one credential of a v0.2 installation: it may do everything, and only its SHA-256 is written down. Save it in a password manager now, `echo "$AGENTIIK_TOKEN"`. Lost, it is replaced by running `sudo ./setup` again, which keeps everything else and mints a new one.
 
 <!-- ci -->
 ```sh
-docker compose ps
+docker compose ps --all
 ```
 
 ```text
 NAME                    IMAGE                                COMMAND                  SERVICE      STATUS
-agentiik-api-1          ghcr.io/agentiik/api:v0.2.3          "/agentiik-api serve"    api          Up
-agentiik-controller-1   ghcr.io/agentiik/controller:v0.2.3   "/agentiik-controller"   controller   Up
+agentiik-api-1          ghcr.io/agentiik/api:v0.2.4          "/agentiik-api serve"    api          Up
+agentiik-controller-1   ghcr.io/agentiik/controller:v0.2.4   "/agentiik-controller"   controller   Up
+agentiik-init-1         ghcr.io/agentiik/api:v0.2.4          "/agentiik-api init"     init         Exited (0)
 agentiik-nats-1         nats:2-alpine                        "docker-entrypoint.s…"   nats         Up (healthy)
 agentiik-postgres-1     postgres:17-alpine                   "docker-entrypoint.s…"   postgres     Up (healthy)
-agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.3       "/usr/local/bin/agk-…"   runner       Up
+agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.4       "/usr/local/bin/agk-…"   runner       Up
 ```
+
+Everything the installation keeps is in Docker volumes named `agentiik_*`, and the one path it uses on the host is `/var/lib/agentiik/work`, where the runner lays out each step's files for the daemon to bind.
 
 ## Point agk at it
 
 <!-- ci -->
 ```sh
-go install github.com/agentiik/agentiik/cmd/agk@v0.2.3
+go install github.com/agentiik/agentiik/cmd/agk@v0.2.4
 export PATH="$PATH:$(go env GOPATH)/bin"
+mkdir -p trust
+docker compose cp api:/agentiik/trust/agentiik.pem trust/
+export SSL_CERT_DIR="$PWD/trust"
 ```
+
+`brew install agentiik/tap/agk` installs the same command line. `SSL_CERT_DIR` adds the certificate `init` made to the authorities `agk` trusts on Linux; on macOS, `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain agentiik.pem`. `AGENTIIK_SERVER` is the address, and `CURL_CA_BUNDLE` what `curl` trusts there:
+
+<!-- ci: none -->
+```sh
+export AGENTIIK_SERVER=https://localhost:8443
+export CURL_CA_BUNDLE="$PWD/trust/agentiik.pem"
+```
+
+With `AGENTIIK_HOST` set, `https://agentiik.example.com:8443`, and behind a proxy, its URL:
 
 <!-- ci: direct -->
 ```sh
-export AGENTIIK_SERVER=https://localhost:8443
-export SSL_CERT_DIR=/etc/agentiik/trust
-export CURL_CA_BUNDLE=/etc/agentiik/trust/agentiik.pem
+export AGENTIIK_SERVER=https://agentiik.example.com:8443
+export CURL_CA_BUNDLE="$PWD/trust/agentiik.pem"
 ```
 
-`brew install agentiik/tap/agk` installs the same command line. `AGENTIIK_SERVER` is the address, `AGENTIIK_TOKEN` the credential, and `SSL_CERT_DIR` adds the certificate `setup` made to the authorities `agk` trusts on Linux, as `CURL_CA_BUNDLE` does for `curl`. Behind a reverse proxy, they were set [above](#behind-a-reverse-proxy). From another machine, copy `/etc/agentiik/trust/agentiik.pem` there and trust it: `SSL_CERT_DIR` on Linux, and on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain agentiik.pem`.
+<!-- ci: proxy -->
+```sh
+export AGENTIIK_SERVER=https://agentiik.example.com
+export CURL_CA_BUNDLE="$PWD/trust/proxy.pem"
+```
 
 ## Run a first workflow
 
@@ -161,7 +185,7 @@ run=$(awk '/ started at / { print $2; exit }' ~/first-run.log)
 agk status "$run"
 agk logs "$run"
 curl -fsSL -H "Authorization: Bearer $AGENTIIK_TOKEN" "$AGENTIIK_SERVER/api/v1/artifacts/agk%3A%2F%2Frun%2F$run%2Fgreet%2Fout%2Fgreeting.txt"
-cd -
+cd ~/agentiik
 ```
 
 ```text
@@ -173,25 +197,50 @@ run 01M3EF42G80SR9XW17YWGEYTTT of demo/first-run@9d4e925 started at https://loca
     0.6s  greet  succeeded, out 1
 first-run succeeded in 0.6s: 1 step, 1 container
 greeting: 1 item
-run 01M3EF42G80SR9XW17YWGEYTTT: https://localhost:8443/api/v1/demo/runs/01M3EF42G80SR9XW17YWGEYTTT
-run 01M3EF42G80SR9XW17YWGEYTTT: demo/first-run@9d4e925, succeeded after 0.6s
-manual by operator at 2026-09-26T09:00:44Z
-greet  succeeded, out 1 sha256:2ec2167f189f
-output greeting: 1 item
+...
 greet | greet runs on x86_64
 greet | driver: the container exited 0: the output envelopes are published
 a file from greet
 ```
 
-The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows. A file it leaves in `/agk/out/files/` becomes an artifact of that output, kept for the seven days `retain` says, which `curl` fetches last by its URI, `agk://run/<run>/greet/out/greeting.txt`, percent-encoded as one segment of the path.
+`agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows. A file it leaves in `/agk/out/files/` becomes an artifact, kept for the seven days `retain` says, which `curl` fetches last by its URI, percent-encoded as one segment of the path.
+
+## Change a setting
+
+Edit `.env`, then `docker compose up -d`: Compose recreates every service whose settings changed, `init` brings the installation in line with them, and the services that read what it writes restart. A new `AGENTIIK_HOST` gets a new certificate, a new `AGENTIIK_NAMESPACE` is created beside the previous one, a new `AGENTIIK_TOKEN` replaces the previous one. `docker compose restart` does not read `.env` again, so it applies nothing.
+
+A second namespace, and a new operator token, which stops the previous one working:
+
+<!-- ci: check before-change -->
+<!-- ci -->
+```sh
+echo 'AGENTIIK_NAMESPACE=team' >> .env
+sed -i '/^AGENTIIK_TOKEN=/d' .env
+echo "AGENTIIK_TOKEN=$(openssl rand -hex 32)" >> .env
+docker compose up -d --wait
+export "$(grep '^AGENTIIK_TOKEN=' .env)"
+```
+<!-- ci: check after-change -->
+
+Another namespace is also `docker compose run --rm --no-deps api namespace create NAME`, which leaves `.env` as it is.
+
+## Upgrade
+
+Set `AGENTIIK_VERSION` in `.env` to the new version, or download the new release's `compose.yaml`, whose default it is, then:
+
+```sh
+docker compose up -d --wait
+```
+
+`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed.
+
+The bus credential of the API and the controller lasts 90 days, and the API warns from 14 days before its end. `init` renews it at any `docker compose up` in that time; `docker compose up -d --force-recreate` also restarts the API and the controller on it.
 
 ## Add a runner on another machine
 
-Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on ports 8443 and 4222, or the proxy's 443 in place of 8443; nothing connects to it. It joins a pool with a single-use token the operator issues, and takes the steps whose `runs_on` names its labels.
+Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on 4222, and the API on 8443 or the proxy's 443; nothing connects to it. It joins a pool with a single-use token the operator issues, and takes the steps whose `runs_on` names its labels. On the installation's host, a pool for its label, and a join token, valid an hour:
 
-On the installation's host, a pool for the new machine's label, and a join token for it, valid an hour:
-
-<!-- ci -->
+<!-- ci: direct proxy -->
 ```sh
 curl -fsS -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
   --data '{"pool":{"name":"lab","labels":["zone=lab"],"namespaces":[],"resource_ceilings":{}}}' "$AGENTIIK_SERVER/api/v1/runner-pools"
@@ -200,34 +249,30 @@ JOIN_TOKEN=$(curl -fsS -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Ty
 echo "$JOIN_TOKEN"
 ```
 
-On the other machine, this repository, the installation's certificates, its address as that machine reaches it, and the token:
+On the other machine, in a directory of its own, the certificates in `trust/` here (`agentiik.pem`, and `proxy.pem` behind a proxy whose authority the system does not trust), the installation's address as that machine reaches it, and the token:
 
 ```sh
-git clone https://github.com/agentiik/deploy.git && cd deploy/single-host
-scp 'agentiik.example.com:/etc/agentiik/trust/*.pem' .
 AGENTIIK_SERVER=https://agentiik.example.com:8443
 JOIN_TOKEN=agkjoin_...
 ```
 
-The certificates are `agentiik.pem`, which the bus serves and, with no proxy in front, the API, and `proxy.pem` where [the proxy's authority](#behind-a-reverse-proxy) is one the system does not trust. Behind a proxy, `AGENTIIK_SERVER` is its URL, `https://agentiik.example.com`.
+Then its own Compose file, [`runner/compose.yaml`](../runner/compose.yaml), and a `.env` for it ([`runner/.env.example`](../runner/.env.example) says what each line is):
 
 <!-- ci: other machine -->
 ```sh
-sudo ./add-runner "$AGENTIIK_SERVER" "$JOIN_TOKEN" zone=lab
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.2.4/runner/compose.yaml
+cat > .env <<EOF
+AGENTIIK_API=$AGENTIIK_SERVER
+AGENTIIK_JOIN_TOKEN=$JOIN_TOKEN
+AGENTIIK_LABELS=zone=lab
+AGENTIIK_CA="$(cat ./*.pem)"
+EOF
+docker compose up -d
 ```
 
-`add-runner` prepares the machine as `setup` prepares the installation's host for its own runner (the directories, the secrets tmpfs, `runner.toml`), runs `agk-runner join` in the runner image as root, then `serve` as the container `agentiik-runner`, which restarts with the machine:
+The runner joins at its first start, and restarts with the machine. `docker compose logs runner` there follows it. Back on the installation's host, a step for the lab:
 
-```text
-add-runner: the secrets tmpfs is mounted at /run/agentiik/secrets, and /etc/fstab mounts it at boot
-This host joined pool lab as runner 01m3....
-...
-add-runner: the runner serves as the container agentiik-runner, and restarts with the host: docker logs agentiik-runner follows it
-```
-
-The same program runs without a container too, as a static binary under systemd: [Installing a runner](https://agentiik.github.io/docs/#installing-a-runner). Back on the installation's host, a step for the lab:
-
-<!-- ci -->
+<!-- ci: direct proxy -->
 ```sh
 mkdir -p ~/on-lab && cd ~/on-lab && git init -q
 cat > agentiik.yaml <<'EOF'
@@ -247,62 +292,49 @@ EOF
 git add agentiik.yaml && git commit -qm "A step for the lab"
 agk push --namespace demo
 agk run --namespace demo
-cd -
+cd ~/agentiik
 ```
 
-To remove the machine, `sudo docker rm --force agentiik-runner` there, and `sudo rm -rf /var/lib/agentiik /etc/agentiik`.
+The same program runs without a container too, as a static binary under systemd: [Installing a runner](https://agentiik.github.io/docs/#installing-a-runner). To remove the machine, there:
 
-## Operate it
-
-The installation starts again with the host: every container restarts unless it was stopped, and `/etc/fstab` mounts the secrets tmpfs.
-
-<!-- ci -->
+<!-- ci: other machine -->
 ```sh
-docker compose stop
-docker compose up --detach --wait
+docker compose down --volumes
+sudo rm -rf /var/lib/agentiik
 ```
 
-A backup is the database and the files under `/srv/agentiik`, one directory per service, taken together, since a run restored without its objects points at artifacts that no longer exist:
+## Back up
+
+The database and the volumes, taken together, since a run restored without its objects points at artifacts that no longer exist:
 
 <!-- ci -->
 ```sh
 docker compose exec -T postgres pg_dump -U postgres -Fc agentiik > agentiik.dump
-sudo tar -C /srv/agentiik -czf agentiik-files.tar.gz api controller nats objects
+docker run --rm -v agentiik_api:/v/api:ro -v agentiik_controller:/v/controller:ro -v agentiik_nats:/v/nats:ro \
+  -v agentiik_objects:/v/objects:ro alpine:3.21 tar -C /v -cz . > agentiik-files.tar.gz
 ```
 
 The archive holds the master key, which opens every secret in the dump: keep the two apart, or encrypt them.
 
-To upgrade, set `AGENTIIK_VERSION` in `.env` to the new version and run `sudo ./setup` again: it pulls, migrates, restarts, and prints a new operator token.
+## Remove
 
-The bus credential of the API and the controller expires after 90 days, and the API warns from 14 days before. `bus-credential` renews it, and `setup` hands it to the controller and restarts both:
-
-```sh
-docker compose run --rm --no-deps api bus-credential /agentiik/bus
-AGENTIIK_TOKEN="$(sudo ./setup)"
-export AGENTIIK_TOKEN
-```
-
-To uninstall, removing every container, image, key and piece of data:
+Every container, image, volume and key:
 
 <!-- ci -->
 ```sh
 docker compose down --rmi all --volumes
-sudo umount /run/agentiik/secrets
-sudo sed -i '\| /run/agentiik/secrets |d' /etc/fstab
-sudo rm -rf /srv/agentiik /var/lib/agentiik /etc/agentiik /run/agentiik
+sudo rm -rf /var/lib/agentiik
 ```
+
+Behind Caddy, `docker rm --force caddy && docker volume rm caddy-data` too.
 
 ## What v0.2 does not do yet
 
 | What | Today | When |
 | --- | --- | --- |
 | Users, groups, sign-in | One operator token may do everything. | v0.3.0 brings principals and a bootstrap token. |
-| Creating a namespace through the API | `setup` creates `AGENTIIK_NAMESPACE`, and another is `docker compose run --rm --no-deps api namespace create team`, on the installation's host. | v0.3.0, with the access model. |
+| Creating a namespace through the API | `AGENTIIK_NAMESPACE`, or `docker compose run --rm --no-deps api namespace create NAME`, on the installation's host. | v0.3.0, with the access model. |
 | The console | Not part of this stack. | Its own releases. |
-| Object store | On disk under `/srv/agentiik/objects`, not MinIO. | v0.9.0 |
+| Object store | On disk in the volume `agentiik_objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |
-| A certificate from a public authority | `setup` signs its own, unless [a reverse proxy](#behind-a-reverse-proxy) in front serves the API with its own; the bus keeps `setup`'s. Replace `/srv/agentiik/api/tls/server.pem` and `server.key` with yours and run `sudo ./setup` again; clients that already trust its authority then need no `agentiik.pem`. | |
-
-## Build from source instead
-
-`compose.build.yaml` builds the three Agentiik images from the source of any tag or branch of [agentiik/agentiik](https://github.com/agentiik/agentiik) rather than pulling them from ghcr.io. Uncomment `COMPOSE_FILE` in `.env`, set `AGENTIIK_VERSION` to that tag or branch, and run `sudo ./setup`: it builds before it starts anything, which takes a few minutes.
+| A certificate from a public authority | `init` signs its own, unless [a reverse proxy](#behind-a-reverse-proxy) in front serves the API with its own; the bus keeps `init`'s. Yours goes in with `docker compose cp` to `init:/init/api/tls/server.pem` and `server.key`, then `docker compose up -d --force-recreate`: `init` never replaces a certificate it did not issue. | |
