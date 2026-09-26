@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# add-runner makes this machine a runner of an installation elsewhere: the directories and the
+# secrets tmpfs the runner needs, the installation's certificate, join with a token the operator
+# issued, then serve, in the runner image on this machine's Docker daemon.
+#
+#   sudo ./add-runner <server> <join token> <labels>
+#
+# The certificate is ./agentiik.pem, copied from /etc/agentiik/trust on the installation's host. The
+# version is the one .env names, or .env.example where there is no .env. Running it again keeps the
+# identity join wrote and restarts the runner.
+set -euo pipefail
+
+say() { printf 'add-runner: %s\n' "$*"; }
+die() {
+  printf 'add-runner: %s\n' "$*" >&2
+  exit 1
+}
+
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here"
+# shellcheck source=runner-host.sh
+. ./runner-host.sh
+
+[ $# -eq 3 ] || die "usage: sudo ./add-runner <server> <join token> <labels>, such as sudo ./add-runner https://agentiik.example.com:8443 agkjoin_... zone=lab"
+server=$1 token=$2 labels=$3
+[ "$(uname -s)" = Linux ] || die "this host runs $(uname -s), and a runner runs on Linux: it hands the Docker daemon paths on this host to bind, which a daemon in a virtual machine cannot see"
+[ "$(id -u)" -eq 0 ] || die "run as root, sudo ./add-runner: it writes /etc/agentiik and /var/lib/agentiik, gives them to uid $agent, and mounts a tmpfs"
+command -v docker >/dev/null || die "Docker Engine is not installed, and every step runs as a container on it"
+[ -f agentiik.pem ] || die "there is no agentiik.pem here: copy /etc/agentiik/trust/agentiik.pem from the installation's host"
+
+version=$(sed -n 's/^AGENTIIK_VERSION=//p' "$([ -f .env ] && echo .env || echo .env.example)")
+image=ghcr.io/agentiik/runner:$version
+
+prepare_runner_host
+install -m 0644 agentiik.pem /etc/agentiik/trust/agentiik.pem
+docker image inspect "$image" >/dev/null 2>&1 || docker pull --quiet "$image"
+
+if [ ! -s /etc/agentiik/runner.env ]; then
+  docker run --rm --user 0:0 "${runner_container[@]}" "$image" join --api "$server" --token "$token" --labels "$labels"
+else
+  say "this host has joined already, as /etc/agentiik/runner.env says, so it keeps that identity"
+fi
+
+docker rm --force agentiik-runner >/dev/null 2>&1 || true
+docker run --detach --name agentiik-runner --restart unless-stopped \
+  --group-add "$(stat -c %g /var/run/docker.sock)" "${runner_container[@]}" "$image" >/dev/null
+
+# serve exits at once on a setting it refuses, so a runner still up after its first heartbeat's
+# worth of time is one the API accepted.
+sleep 15
+[ "$(docker inspect --format '{{.State.Running}} {{.RestartCount}}' agentiik-runner)" = "true 0" ] ||
+  die "the runner did not stay up: docker logs agentiik-runner says why"
+say "the runner serves as the container agentiik-runner, and restarts with the host: docker logs agentiik-runner follows it"

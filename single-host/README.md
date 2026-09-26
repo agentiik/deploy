@@ -11,7 +11,7 @@ Every command below is run, exactly as written here, on a fresh Ubuntu machine b
 | A Linux host, x86-64 or arm64 | macOS and Windows are not runner hosts: the runner hands the Docker daemon paths on the host to bind, which Docker Desktop's virtual machine cannot see. `agk` runs anywhere. |
 | Docker Engine 28 or later, with the Compose plugin | Every component is a container, and so is every step of every workflow. |
 | `sudo`, `openssl`, `curl`, `git` | `setup` writes under `/etc`, `/var/lib`, `/run` and `/srv`, and makes the certificate and the keys. |
-| Port 8443 free, and 4222 and 8222 on the loopback | The API serves HTTPS on 8443 on every interface; the bus and its health check listen on `127.0.0.1` alone. |
+| Ports 8443 and 4222 open, and 8222 free on the loopback | The API serves HTTPS on 8443 (`AGENTIIK_PORT`) to `agk` and to every runner, and the bus listens on 4222 for every runner, both on every interface: open them to the machines that reach the installation, and to nothing else. The bus's health check listens on `127.0.0.1:8222` alone. |
 | Go 1.27, or Homebrew, where you run `agk` | To install the command line. `agk push` also needs a Docker daemon, to resolve image tags to digests. |
 
 ## Install
@@ -26,7 +26,7 @@ cd deploy/single-host
 cp .env.example .env
 ```
 
-`.env` holds the choices this host makes. The one to change first is `AGENTIIK_HOST`, the name clients reach the API at, which the certificate is issued to; `localhost` works for trying it on one machine. `AGENTIIK_VERSION` is the one variable that picks what runs, and every other file follows it.
+`.env` holds the choices this host makes. The one to change first is `AGENTIIK_HOST`, the name `agk` and every runner reach the API and the bus at, which the certificate is issued to; `localhost` works for trying it on one machine, and a runner on another machine needs a name or an address that machine reaches. `AGENTIIK_VERSION` is the one variable that picks what runs, and every other file follows it.
 
 <!-- ci -->
 ```sh
@@ -139,6 +139,70 @@ greet | driver: the container exited 0: the output envelopes are published
 
 The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows.
 
+## Add a runner on another machine
+
+Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on ports 8443 and 4222; nothing connects to it. It joins a pool with a single-use token the operator issues, and takes the steps whose `runs_on` names its labels.
+
+On the installation's host, a pool for the new machine's label, and a join token for it, valid an hour:
+
+<!-- ci -->
+```sh
+curl -fsS --cacert /etc/agentiik/trust/agentiik.pem -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"pool":{"name":"lab","labels":["zone=lab"],"namespaces":[],"resource_ceilings":{}}}' "$AGENTIIK_SERVER/api/v1/runner-pools"
+JOIN_TOKEN=$(curl -fsS --cacert /etc/agentiik/trust/agentiik.pem -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"labels":["zone=lab"]}' "$AGENTIIK_SERVER/api/v1/runner-pools/lab/join-tokens" | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+echo "$JOIN_TOKEN"
+```
+
+On the other machine, this repository, the installation's certificate, its address as that machine reaches it, and the token:
+
+```sh
+git clone https://github.com/agentiik/deploy.git && cd deploy/single-host
+scp agentiik.example.com:/etc/agentiik/trust/agentiik.pem .
+AGENTIIK_SERVER=https://agentiik.example.com:8443
+JOIN_TOKEN=agkjoin_...
+```
+
+<!-- ci: other machine -->
+```sh
+sudo ./add-runner "$AGENTIIK_SERVER" "$JOIN_TOKEN" zone=lab
+```
+
+`add-runner` prepares the machine as `setup` prepares the installation's host for its own runner (the directories, the secrets tmpfs, `runner.toml`), runs `agk-runner join` in the runner image as root, then `serve` as the container `agentiik-runner`, which restarts with the machine:
+
+```text
+add-runner: the secrets tmpfs is mounted at /run/agentiik/secrets, and /etc/fstab mounts it at boot
+This host joined pool lab as runner 01m3....
+...
+add-runner: the runner serves as the container agentiik-runner, and restarts with the host: docker logs agentiik-runner follows it
+```
+
+The same program runs without a container too, as a static binary under systemd: [Installing a runner](https://agentiik.github.io/docs/#installing-a-runner). Back on the installation's host, a step for the lab:
+
+<!-- ci -->
+```sh
+mkdir -p ~/on-lab && cd ~/on-lab && git init -q
+cat > agentiik.yaml <<'EOF'
+apiVersion: agentiik.dev/v1
+kind: Workflow
+metadata:
+  name: on-lab
+  namespace: demo
+steps:
+  where:
+    image: alpine:3.21
+    runs_on: [zone=lab]
+    script:
+      - echo "where runs on $(hostname)" >&2
+EOF
+git add agentiik.yaml && git commit -qm "A step for the lab"
+agk push --namespace demo
+agk run --namespace demo
+cd -
+```
+
+To remove the machine, `sudo docker rm --force agentiik-runner` there, and `sudo rm -rf /var/lib/agentiik /etc/agentiik`.
+
 ## Operate it
 
 The installation starts again with the host: every container restarts unless it was stopped, and `/etc/fstab` mounts the secrets tmpfs.
@@ -185,7 +249,7 @@ sudo rm -rf /srv/agentiik /var/lib/agentiik /etc/agentiik /run/agentiik
 | --- | --- | --- |
 | Users, groups, sign-in | One operator token may do everything. | v0.3.0 brings principals and a bootstrap token. |
 | Creating a namespace | No verb yet: `setup` creates `AGENTIIK_NAMESPACE` with SQL, and another is one line, `docker compose exec -T postgres psql -U postgres -d agentiik -c "insert into namespaces (name) values ('team')"`. | `agentiik-api namespace create`, [agentiik#336](https://github.com/agentiik/agentiik/issues/336), which `setup` will use. |
-| The default pool | Created with no label, and a runner claims at least one, so `setup` gives it the runner's labels. | A runner with no label joins it, [agentiik#336](https://github.com/agentiik/agentiik/issues/336). |
+| The default pool | Created with no label, and a runner claims at least one, so `setup` gives it the runner's labels, and another machine joins a pool of its own. | A runner with no label joins it, [agentiik#336](https://github.com/agentiik/agentiik/issues/336). |
 | The console | Not part of this stack. | Its own releases. |
 | Object store | On disk under `/srv/agentiik/objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |

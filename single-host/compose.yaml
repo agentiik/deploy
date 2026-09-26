@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
   nats:
     image: nats:2-alpine
-    network_mode: host # listens on 127.0.0.1:4222 alone
+    network_mode: host # port 4222, where every runner reaches it
     command: ["-c", "/nats/nats.conf"]
     volumes: ["${AGENTIIK_DATA}/nats:/nats"]
     healthcheck: { test: wget -qO /dev/null http://127.0.0.1:8222/healthz, interval: 2s }

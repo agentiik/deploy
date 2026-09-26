@@ -32,7 +32,7 @@ jobs:
 
       - name: Lint
         run: |
-          shellcheck single-host/setup
+          (cd single-host && shellcheck -x setup add-runner runner-host.sh)
           cp single-host/.env.example single-host/.env
           echo DOCKER_GID=0 >> single-host/.env
           docker compose -f single-host/compose.yaml config --quiet
@@ -64,11 +64,48 @@ jobs:
             echo "UNPUBLISHED=$version" >> "$GITHUB_ENV"
           fi
 
+      # A runner reaches the installation at AGENTIIK_HOST, which a user sets to the name other
+      # machines reach: here the address of this machine's network interface, which the second
+      # machine below reaches and which is not the loopback.
+      - name: Name the installation
+        working-directory: single-host
+        run: |
+          host_ip=$(hostname -I | awk '{ print $1 }')
+          sed -i "s/^AGENTIIK_HOST=.*/AGENTIIK_HOST=$host_ip/" .env.example
+          echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
+
+      # The other machine of "Add a runner on another machine": a Docker daemon of its own, in a
+      # container on the default bridge, which reaches this machine's address and not its loopback.
+      # It has what the README asks of a Linux machine: bash, sudo, and this repository.
+      - name: Start another machine
+        run: |
+          docker run --detach --privileged --name machine2 docker:29-dind
+          for _ in $(seq 60); do docker exec machine2 docker version >/dev/null 2>&1 && break; sleep 1; done
+          docker exec machine2 apk add --no-cache --quiet bash sudo coreutils
+          docker cp single-host machine2:/root/single-host
+
       - name: Extract the README's commands
         run: |
+          # A block marked for the other machine runs there, after what the README has the user
+          # carry over by hand: the certificate, and the runner image where it was built here.
           awk '
             /^<!-- ci -->$/ { take = 1; next }
-            take && /^```/ { if (inside) { inside = 0; take = 0; print "" } else { inside = 1 }; next }
+            /^<!-- ci: other machine -->$/ { take = 1; other = 1; next }
+            take && /^```/ {
+              if (!inside) {
+                inside = 1
+                if (other) {
+                  print "docker cp /etc/agentiik/trust/agentiik.pem machine2:/root/single-host/agentiik.pem"
+                  print "image=ghcr.io/agentiik/runner:$(sed -n \"s/^AGENTIIK_VERSION=//p\" .env)"
+                  print "if docker image inspect \"$image\" >/dev/null 2>&1; then docker save \"$image\" | docker exec -i machine2 docker load; fi"
+                  print "docker exec -i -e JOIN_TOKEN=\"$JOIN_TOKEN\" -e AGENTIIK_SERVER=\"https://$HOST_IP:8443\" -w /root/single-host machine2 bash -veuo pipefail <<'\''OTHER_MACHINE'\''"
+                }
+              } else {
+                if (other) print "OTHER_MACHINE"
+                inside = 0; take = 0; other = 0; print ""
+              }
+              next
+            }
             inside { print }
           ' single-host/README.md > "$RUNNER_TEMP/readme.sh"
           if [ -n "${UNPUBLISHED:-}" ]; then
@@ -87,3 +124,4 @@ jobs:
         run: |
           sudo docker compose ps --all || true
           sudo docker compose logs --no-color --tail 200 || true
+          docker exec machine2 docker logs agentiik-runner || true
