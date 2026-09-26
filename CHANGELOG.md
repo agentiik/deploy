@@ -6,7 +6,7 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.2.2, 2026-09-26
 
 - `single-host/`: behind a reverse proxy that terminates TLS, chosen by `AGENTIIK_PUBLIC_URL` in `.env`, with the API in plain HTTP on the loopback, the bus still on 4222 with its own TLS, ready configurations for Caddy, nginx and Traefik in `proxy/`, and the README run by CI behind Caddy too.
 
