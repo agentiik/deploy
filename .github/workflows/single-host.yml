@@ -66,9 +66,9 @@ jobs:
       # nowhere else. Once the version is published this step changes nothing.
       - name: Choose what to install
         run: |
-          version=$(sed -n 's/.*AGENTIIK_VERSION:-\([^}]*\)}.*/\1/p' single-host/compose.yaml | head -n 1)
-          if docker manifest inspect "ghcr.io/agentiik/api:$version" >/dev/null 2>&1 &&
-             git ls-remote --exit-code --tags https://github.com/agentiik/agentiik.git "refs/tags/$version" >/dev/null; then
+          . .github/single-host/published.sh
+          version=$(default_version single-host/compose.yaml)
+          if published "$version"; then
             echo "Installing $version as published"
           else
             echo "$version is not published yet: installing the dev images of main"
@@ -181,6 +181,203 @@ jobs:
           docker compose -p agentiik logs --no-color --tail 200 || true
           docker exec machine2 docker compose -p agentiik-runner logs --no-color --tail 200 || true
           docker logs caddy || true
+
+  # Upgrading a deployment is replacing compose.yaml and editing .env, then docker compose pull and up: nothing else, no file moved, no volume migrated, no command run by hand. The job installs a deployment as a person did, runs a two-step workflow on it, upgrades it that way to this checkout's compose.yaml, and checks that the operator token is still accepted, the earlier run still reads as it did with its outputs and its artifact, a runner is ready, and the same workflow runs again. release starts from the latest release of this repository, as its README installed it; latest-to-dev from main's compose.yaml following latest, to this one following dev. A release whose layout this compose.yaml cannot start on fails the job, which is what it is for.
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [release, latest-to-dev]
+    name: upgrade (${{ matrix.variant }})
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Git identity
+        run: |
+          git config --global user.name "Upgrade test"
+          git config --global user.email "upgrade@agentiik.invalid"
+
+      # What the deployment runs before and after. The images this checkout's compose.yaml names by default, where they are published, and otherwise the images of main, tagged dev, set in the environment of the upgrade alone as the readme job does, since a person upgrading to a release changes compose.yaml and nothing in .env. Following latest and dev is AGENTIIK_VERSION in .env, which is what such a person edits.
+      - name: Choose what to upgrade from and to
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          . .github/single-host/published.sh
+          to=$(default_version single-host/compose.yaml)
+          case $VARIANT in
+          release)
+            from=$(git ls-remote --tags --refs https://github.com/agentiik/deploy.git | sed 's|.*refs/tags/||' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)
+            if [ -z "$from" ]; then echo "agentiik/deploy has no release tag vX.Y.Z to upgrade from" >&2; exit 1; fi
+            curl -fsSL -o "$RUNNER_TEMP/from-compose.yaml" "https://raw.githubusercontent.com/agentiik/deploy/$from/single-host/compose.yaml"
+            from_images=$(default_version "$RUNNER_TEMP/from-compose.yaml")
+            {
+              echo "FROM_LABEL=release $from, running $from_images"
+              echo "FROM_IMAGES=$from_images"
+              echo "FROM_AGK=$from_images"
+              echo "FROM_ENV_VERSION="
+              echo "TO_ENV_VERSION="
+            } >> "$GITHUB_ENV"
+            if published "$to"; then
+              echo "Upgrading $from to this checkout, running $to as published"
+              { echo "TO_IMAGES=$to"; echo "TO_AGK=$to"; echo "TO_SHELL_VERSION="; } >> "$GITHUB_ENV"
+            else
+              echo "Upgrading $from to this checkout, whose $to is not published yet: running the dev images of main"
+              { echo "TO_IMAGES=dev"; echo "TO_AGK=main"; echo "TO_SHELL_VERSION=dev"; } >> "$GITHUB_ENV"
+            fi
+            ;;
+          latest-to-dev)
+            curl -fsSL -o "$RUNNER_TEMP/from-compose.yaml" https://raw.githubusercontent.com/agentiik/deploy/main/single-host/compose.yaml
+            echo "Upgrading main's compose.yaml following latest to this checkout following dev"
+            {
+              echo "FROM_LABEL=main's compose.yaml following latest"
+              echo "FROM_IMAGES=latest"
+              echo "FROM_AGK=latest"
+              echo "FROM_ENV_VERSION=latest"
+              echo "TO_IMAGES=dev"
+              echo "TO_AGK=main"
+              echo "TO_ENV_VERSION=dev"
+              echo "TO_SHELL_VERSION="
+            } >> "$GITHUB_ENV"
+            ;;
+          esac
+          {
+            echo "AGENTIIK_SERVER=https://localhost:8443"
+            echo "SSL_CERT_DIR=$HOME/agentiik/trust"
+            echo "CURL_CA_BUNDLE=$HOME/agentiik/trust/agentiik.pem"
+          } >> "$GITHUB_ENV"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # As the README of that release has it: compose.yaml, a .env with the operator token, docker compose up, and agk of the same version trusting the certificate init made.
+      - name: Install the deployment to upgrade
+        run: |
+          . .github/single-host/upgrade.sh
+          mkdir -p "$installation" && cp "$RUNNER_TEMP/from-compose.yaml" "$installation/compose.yaml"
+          cd "$installation"
+          echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" > .env
+          if [ -n "$FROM_ENV_VERSION" ]; then echo "AGENTIIK_VERSION=$FROM_ENV_VERSION" >> .env; fi
+          docker compose up -d --wait
+          images_are "$FROM_IMAGES"
+          go install "github.com/agentiik/agentiik/cmd/agk@$FROM_AGK"
+          mkdir -p trust
+          docker compose cp api:/agentiik/trust/agentiik.pem trust/
+          cp trust/agentiik.pem "$state/agentiik.pem"
+          grep -v '^AGENTIIK_VERSION=' .env | sha256sum > "$state/env.sha256"
+
+      # Two steps, the second reading what the first published, and an artifact, so that the run has outputs and a file to read back after the upgrade.
+      - name: Run a workflow before the upgrade
+        run: |
+          . .github/single-host/upgrade.sh
+          AGENTIIK_TOKEN=$(token) && export AGENTIIK_TOKEN
+          mkdir -p ~/upgrade-run && cd ~/upgrade-run && git init -q
+          cat > agentiik.yaml <<'EOF'
+          apiVersion: agentiik.dev/v1
+          kind: Workflow
+          metadata:
+            name: upgrade-run
+            namespace: demo
+          outputs:
+            greeting:
+              from: { step: greet, port: out }
+              retain: 7d
+            shout:
+              from: { step: shout, port: out }
+              retain: 7d
+          steps:
+            greet:
+              image: alpine:3.21
+              script:
+                - echo "hello from ${AGK_STEP}"
+                - echo "a file from ${AGK_STEP}" > /agk/out/files/greeting.txt
+              outputs: [out]
+            shout:
+              image: alpine:3.21
+              needs:
+                - { step: greet, port: out, as: in }
+              script:
+                - test -s /agk/in/in/envelope.json
+                - echo "${AGK_STEP} read $(wc -c < /agk/in/in/envelope.json) bytes from greet"
+              outputs: [out]
+          EOF
+          git add agentiik.yaml && git commit -qm "A workflow run before an upgrade"
+          run=$(run_workflow before "before the upgrade")
+          if [ -z "$run" ]; then fail "agk run printed no run identifier before the upgrade"; fi
+          echo "$run" > "$state/run"
+          snapshot "$run" before "before the upgrade"
+          ready_runners 0 > "$state/runners-before" || fail "no runner is ready before the upgrade"
+          echo "Run $run succeeded on $(cut -d' ' -f1 "$state/runners-before" | paste -sd, -)"
+
+      # What a person does: the new compose.yaml in place of the old one, AGENTIIK_VERSION edited in .env where they follow a channel, then pull and up. agk is upgraded the way it was installed.
+      - name: Upgrade with compose.yaml and .env alone
+        run: |
+          . .github/single-host/upgrade.sh
+          cd "$installation"
+          cp "$GITHUB_WORKSPACE/single-host/compose.yaml" compose.yaml
+          if [ -n "$TO_ENV_VERSION" ]; then sed -i "s/^AGENTIIK_VERSION=.*/AGENTIIK_VERSION=$TO_ENV_VERSION/" .env; fi
+          if [ -n "$TO_SHELL_VERSION" ]; then export AGENTIIK_VERSION=$TO_SHELL_VERSION; fi
+          docker compose pull || fail "docker compose pull failed"
+          docker compose up -d --wait || fail "docker compose up -d --wait did not bring the installation up on the new compose.yaml, as its output above says"
+          date -u +%s > "$state/upgraded-at"
+          docker compose ps --all
+          images_are "$TO_IMAGES"
+          go install "github.com/agentiik/agentiik/cmd/agk@$TO_AGK"
+
+      - name: Check what the upgrade kept
+        run: |
+          . .github/single-host/upgrade.sh
+          cd "$installation"
+          AGENTIIK_TOKEN=$(token) && export AGENTIIK_TOKEN
+          run=$(cat "$state/run")
+
+          if [ "$(grep -v '^AGENTIIK_VERSION=' .env | sha256sum)" != "$(cat "$state/env.sha256")" ]; then
+            fail ".env changed beyond AGENTIIK_VERSION during the upgrade, which the test does not do: something rewrote it"
+          fi
+
+          docker compose cp api:/agentiik/trust/agentiik.pem "$state/agentiik-after.pem" || fail "the API's certificate could not be read after the upgrade"
+          if ! cmp -s "$state/agentiik.pem" "$state/agentiik-after.pem"; then
+            fail "init issued a new certificate, which agk and every runner trusted in its place: each would have to be handed the new one by hand"
+          fi
+
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $AGENTIIK_TOKEN" "$AGENTIIK_SERVER/api/v1/runner-pools")
+          if [ "$status" != 200 ]; then fail "the operator token in .env was answered $status after the upgrade, where it was accepted before"; fi
+
+          snapshot "$run" after "after the upgrade"
+          for file in run.json output-greeting output-shout greeting.txt; do
+            if ! diff -u "$state/before/$file" "$state/after/$file"; then
+              fail "run $run reads otherwise after the upgrade: $file differs, as the diff above shows"
+            fi
+          done
+          echo "Run $run reads as it did, with its outputs and its artifact"
+
+          ready=$(ready_runners "$(cat "$state/upgraded-at")") || fail "no runner reported ready at a heartbeat within three minutes of the upgrade"
+          while read -r runner version; do
+            if grep -q "^$runner " "$state/runners-before"; then
+              echo "Runner $runner is ready, the same as before the upgrade, now at $version"
+            else
+              echo "Runner $runner is ready, joined anew since the upgrade, at $version"
+            fi
+          done <<< "$ready"
+
+          again=$(run_workflow after "after the upgrade")
+          if [ -z "$again" ]; then fail "agk run printed no run identifier after the upgrade"; fi
+          snapshot "$again" again "after the upgrade"
+          echo "Run $again of the same workflow succeeded after the upgrade"
+
+      - name: Logs of what failed
+        if: failure()
+        run: |
+          docker compose -p agentiik ps --all || true
+          docker compose -p agentiik logs --no-color --tail 200 || true
 
   # Each file in single-host/proxy/, run as its comments say in front of a stand-in for the API,
   # which checks what the API asks of a proxy: %2F passed undecoded, a log stream not buffered, and

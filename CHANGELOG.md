@@ -6,6 +6,10 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## Unreleased
+
+- The single-host workflow upgrades the latest release, and `latest` to `dev`, with `compose.yaml` and `.env` alone, and checks that the operator token, an earlier run with its outputs and the runner survive and that a new run succeeds.
+
 ## v0.2.5, 2026-09-26
 
 - An installation of `v0.2.4` is not upgraded in place: its state is in Docker volumes, and `v0.2.5` keeps it in `AGENTIIK_DATA`. Remove it as its README said, then start anew.
