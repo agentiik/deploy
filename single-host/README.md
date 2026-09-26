@@ -29,7 +29,7 @@ That file is the installation, and it runs as it is: every setting has its defau
 <!-- ci: direct -->
 ```sh
 echo 'AGENTIIK_HOST=agentiik.example.com' > .env
-echo "AGENTIIK_TOKEN=$(openssl rand -hex 32)" >> .env
+echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" >> .env
 ```
 
 ### Behind a reverse proxy
@@ -99,7 +99,7 @@ Where `.env` sets it, it is that one:
 
 <!-- ci: direct -->
 ```sh
-export "$(grep '^AGENTIIK_TOKEN=' .env)"
+export AGENTIIK_TOKEN="$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
 ```
 
 <!-- ci -->
@@ -207,7 +207,7 @@ a file from greet
 
 ## Change a setting
 
-Edit `.env`, then `docker compose up -d`: Compose recreates every service whose settings changed, `init` brings the installation in line with them, and the services that read what it writes restart. A new `AGENTIIK_HOST` gets a new certificate, a new `AGENTIIK_NAMESPACE` is created beside the previous one, a new `AGENTIIK_TOKEN` replaces the previous one. `docker compose restart` does not read `.env` again, so it applies nothing.
+Edit `.env`, then `docker compose up -d`: Compose recreates every service whose settings changed, `init` brings the installation in line with them, and the services that read what it writes restart. A new `AGENTIIK_HOST` gets a new certificate, a new `AGENTIIK_NAMESPACE` is created beside the previous one, a new `AGENTIIK_OPERATOR_TOKEN` replaces the previous one. It is named apart from `AGENTIIK_TOKEN`, which `agk` reads, because Compose prefers a variable of the shell to the same one in `.env`: exported for `agk`, it would hide every change made in `.env`. `docker compose restart` does not read `.env` again, so it applies nothing.
 
 A second namespace, and a new operator token, which stops the previous one working:
 
@@ -215,10 +215,10 @@ A second namespace, and a new operator token, which stops the previous one worki
 <!-- ci -->
 ```sh
 echo 'AGENTIIK_NAMESPACE=team' >> .env
-sed -i '/^AGENTIIK_TOKEN=/d' .env
-echo "AGENTIIK_TOKEN=$(openssl rand -hex 32)" >> .env
+sed -i '/^AGENTIIK_OPERATOR_TOKEN=/d' .env
+echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up -d --wait
-export "$(grep '^AGENTIIK_TOKEN=' .env)"
+export AGENTIIK_TOKEN="$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
 ```
 <!-- ci: check after-change -->
 

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Sourced by the README's script after "Change a setting", which wrote a new AGENTIIK_TOKEN and
+# Sourced by the README's script after "Change a setting", which wrote a new AGENTIIK_OPERATOR_TOKEN and
 # AGENTIIK_NAMESPACE in .env and ran docker compose up -d: both have taken effect, with nothing but
 # that. The new token is accepted and the previous one refused, and a workflow runs end to end in
 # the new namespace, on the runner restarted with the rest.

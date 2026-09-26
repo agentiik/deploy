@@ -40,7 +40,7 @@ services:
       AGK_INIT_DIR: /init
       AGK_INIT_HOST: ${AGENTIIK_HOST:-localhost}
       AGK_INIT_NAMESPACE: ${AGENTIIK_NAMESPACE:-demo}
-      AGK_OPERATOR_TOKEN: ${AGENTIIK_TOKEN:-} # empty, init mints one where it stored none
+      AGK_OPERATOR_TOKEN: ${AGENTIIK_OPERATOR_TOKEN:-} # empty, init mints one where it stored none
       AGK_MIGRATE_DATABASE_URL: postgres://postgres@/agentiik?host=/run/postgresql
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
     volumes:
