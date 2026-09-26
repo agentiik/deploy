@@ -6,6 +6,10 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## Unreleased
+
+- `single-host/`: an installation on one Linux host with Docker Compose (PostgreSQL, NATS, the API, the controller and a runner), a `setup` script that prepares the host and joins the runner, and a README that is its user guide, whose commands CI runs verbatim through a first workflow run.
+
 ## v0.2.0, 2026-09-26
 
 Nothing changed here beyond `CLAUDE.md`, copied from `.github` to name `homebrew-tap`. The version moves because every repository carries the same one, which [Versioning](https://agentiik.github.io/docs#versioning) sets out.

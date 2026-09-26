@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# setup prepares this host for the single-host installation and starts it: everything compose.yaml
+# mounts, the database and the bus, and the runner's identity. It reads .env, and runs as root, since
+# it writes /etc/agentiik, /var/lib/agentiik and a tmpfs mount.
+#
+# Standard output is the operator token and nothing else, so that AGENTIIK_TOKEN="$(sudo ./setup)"
+# keeps it in a shell and nowhere else; everything setup says goes to standard error. Only the
+# token's hash is written down, since the token itself would be a working credential at rest.
+#
+# Running it again keeps every key, the bus identity, the database and the runner's identity, and
+# does what is missing: after a failure, after changing AGENTIIK_VERSION (it pulls or builds,
+# migrates and restarts), or to replace a lost operator token, since every run mints a new one and
+# the previous one stops working.
+#
+# What each step mirrors is how the project's own end-to-end installation, e2e/harness.go and
+# e2e/daemons.go in github.com/agentiik/agentiik, stands one up.
+set -euo pipefail
+
+exec 3>&1 1>&2
+
+say() { printf 'setup: %s\n' "$*"; }
+die() {
+  printf 'setup: %s\n' "$*"
+  exit 1
+}
+
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here"
+
+# The account every Agentiik image runs as, which owns what the API, the controller and the runner
+# read and write.
+agent=65532
+
+# ---------------------------------------------------------------------------------------------
+# What this host is, and what .env chose.
+
+[ "$(uname -s)" = Linux ] || die "this host runs $(uname -s), and an installation runs on Linux: the runner hands the Docker daemon paths on this host to bind, which a daemon in a virtual machine, as Docker Desktop is, cannot see. agk runs anywhere and reaches the installation from there."
+[ "$(id -u)" -eq 0 ] || die "run as root, sudo ./setup: it writes /etc/agentiik, /var/lib/agentiik and $0's data directory, gives them to uid $agent, and mounts a tmpfs"
+case "$(uname -m)" in
+x86_64 | aarch64 | arm64) ;;
+*) die "this host is $(uname -m), and the images are built for x86-64 and arm64" ;;
+esac
+for tool in docker openssl curl sha256sum; do
+  command -v "$tool" >/dev/null || die "$tool is not installed, and setup needs it"
+done
+docker compose version >/dev/null 2>&1 || die "the Docker Compose plugin is not installed: https://docs.docker.com/compose/install/linux/"
+
+[ -f .env ] || die "there is no .env beside setup: cp .env.example .env, and read what it chooses"
+# shellcheck source=/dev/null
+. ./.env
+for name in AGENTIIK_VERSION AGENTIIK_HOST AGENTIIK_PORT AGENTIIK_DATA AGENTIIK_NAMESPACE AGENTIIK_RUNNER_LABELS AGENTIIK_RUNNER_CONCURRENCY; do
+  [ -n "${!name:-}" ] || die "$name is not set in .env, and .env.example says what it is"
+done
+case "$AGENTIIK_HOST" in *[!A-Za-z0-9.-]*) die "AGENTIIK_HOST is $AGENTIIK_HOST, and it is a DNS name or an IPv4 address" ;; esac
+case "$AGENTIIK_PORT" in *[!0-9]*) die "AGENTIIK_PORT is $AGENTIIK_PORT, and it is a port number" ;; esac
+case "$AGENTIIK_DATA" in /*) ;; *) die "AGENTIIK_DATA is $AGENTIIK_DATA, and it is an absolute path" ;; esac
+case "$AGENTIIK_NAMESPACE" in *[!a-z0-9-]*) die "AGENTIIK_NAMESPACE is $AGENTIIK_NAMESPACE, and a namespace is lowercase words joined by hyphens" ;; esac
+case "$AGENTIIK_RUNNER_LABELS" in *[!A-Za-z0-9=.,_-]*) die "AGENTIIK_RUNNER_LABELS is $AGENTIIK_RUNNER_LABELS, and it is key=value labels separated by commas" ;; esac
+
+data=$AGENTIIK_DATA
+host=$AGENTIIK_HOST
+port=$AGENTIIK_PORT
+public_url="https://$host:$port"
+labels=$AGENTIIK_RUNNER_LABELS
+
+# The group that owns the Docker socket, which the runner is given and nothing else of the daemon's.
+socket_gid=$(stat -c %g /var/run/docker.sock) || die "there is no Docker socket at /var/run/docker.sock, which the runner drives the daemon through"
+if grep -q '^DOCKER_GID=' .env; then
+  sed -i "s/^DOCKER_GID=.*/DOCKER_GID=$socket_gid/" .env
+else
+  printf '\n# Written by setup: the group that owns /var/run/docker.sock, which the runner is given.\nDOCKER_GID=%s\n' "$socket_gid" >>.env
+fi
+
+say "installing Agentiik $AGENTIIK_VERSION at $public_url, keeping its state in $data"
+
+# ---------------------------------------------------------------------------------------------
+# Directories, each owned by whoever reads it and closed to everybody else.
+
+install -d -m 0755 "$data" "$data/trust" "$data/jetstream"
+install -d -m 0700 -o "$agent" -g "$agent" "$data/api" "$data/bus" "$data/objects" "$data/tls"
+# The runner's, at the paths the runner's constants name, the same on the host and in its container.
+install -d -m 0755 /etc/agentiik
+install -d -m 0700 -o "$agent" -g "$agent" /var/lib/agentiik
+
+# The tmpfs secret values are written on before a step is given them. The runner refuses one that is
+# not a tmpfs mounted noexec,nosuid,nodev, and the line in /etc/fstab mounts it again at boot.
+secrets=/run/agentiik/secrets
+fstab_line="tmpfs $secrets tmpfs noexec,nosuid,nodev,size=64m,mode=0700,uid=$agent,gid=$agent 0 0"
+grep -qs " $secrets " /etc/fstab || printf '%s\n' "$fstab_line" >>/etc/fstab
+install -d -m 0700 "$secrets"
+grep -qs " $secrets " /proc/mounts || mount "$secrets"
+say "the secrets tmpfs is mounted at $secrets, and /etc/fstab mounts it at boot"
+
+# ---------------------------------------------------------------------------------------------
+# The certificate. A single host has no terminator in front: the API serves TLS itself, and the bus
+# on the same certificate, which setup makes and signs itself. Clients trust that one certificate,
+# as trust/agentiik.pem, rather than an authority that could sign others. A certificate from an
+# authority clients already trust replaces tls/server.pem and tls/server.key, and trust/agentiik.pem
+# then holds that authority, or nothing where the system's own roots include it.
+
+san="DNS:localhost,IP:127.0.0.1"
+case "$host" in
+localhost | 127.0.0.1) ;;
+*[!0-9.]*) san="DNS:$host,$san" ;;
+*) san="IP:$host,$san" ;;
+esac
+if [ -f "$data/tls/server.pem" ] && ! openssl x509 -in "$data/tls/server.pem" -noout -ext subjectAltName 2>/dev/null | grep -Eq "(DNS|IP Address):$host(,|\$)"; then
+  say "the certificate in $data/tls is not issued to $host, so a new one replaces it: every client trusts the new trust/agentiik.pem"
+  rm -f "$data/tls/server.pem" "$data/tls/server.key"
+fi
+if [ ! -f "$data/tls/server.pem" ]; then
+  config=$(mktemp)
+  cat >"$config" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = $host
+[ext]
+subjectAltName = $san
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+EOF
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
+    -config "$config" -keyout "$data/tls/server.key" -out "$data/tls/server.pem" 2>/dev/null
+  rm -f "$config"
+  say "made a certificate for $san, valid 825 days"
+fi
+chown "$agent:$agent" "$data/tls/server.pem" "$data/tls/server.key"
+chmod 0644 "$data/tls/server.pem"
+chmod 0600 "$data/tls/server.key"
+install -m 0644 "$data/tls/server.pem" "$data/trust/agentiik.pem"
+
+# ---------------------------------------------------------------------------------------------
+# Keys and passwords, each in a file its owner alone can read, since every program refuses a secret
+# anybody else can.
+
+secret_file() { # path owner command...: writes what command prints, once
+  local path=$1 owner=$2
+  shift 2
+  if [ ! -s "$path" ]; then
+    (umask 077 && "$@" >"$path")
+  fi
+  chown "$owner" "$path"
+  chmod 0600 "$path"
+}
+master_key() { printf 'id: %s\nkey: %s\n' "$(date -u +%Y-%m)" "$(openssl rand -base64 32)"; }
+secret_file "$data/postgres-password" root openssl rand -hex 32
+secret_file "$data/database-password" "$agent" openssl rand -hex 32
+secret_file "$data/api/presign-key" "$agent" openssl rand -base64 32
+secret_file "$data/api/master-key" "$agent" master_key
+
+token="agk_op_$(openssl rand -hex 24)"
+(umask 077 && printf %s "$token" | sha256sum | cut -d' ' -f1 >"$data/api/operator-token.sha256")
+chown "$agent:$agent" "$data/api/operator-token.sha256"
+say "wrote the master key, the presign key, the database passwords and a new operator token's hash"
+
+# ---------------------------------------------------------------------------------------------
+# The runner's host settings.
+
+if docker info --format '{{json .SecurityOptions}}' | grep -q 'name=userns'; then
+  remap="# This daemon remaps user namespaces, so the runner keeps its floor.
+require_userns_remap = true"
+else
+  remap="# This daemon does not remap user namespaces, and the runner refuses such a daemon unless this
+# line says otherwise. false gives up that floor on this host: root in a step's container is root on
+# this host, and a process that escapes a container is that account rather than an unprivileged one
+# that maps to no real user. Remap the daemon (userns-remap in /etc/docker/daemon.json), set this to
+# true and restart the runner to keep it.
+require_userns_remap = false"
+fi
+cat >/etc/agentiik/runner.toml <<EOF
+# Written by deploy/single-host/setup. https://agentiik.github.io/docs/#configuration lists every key.
+
+$remap
+
+# The tmpfs, mounted noexec,nosuid,nodev, that secret values are written on before a step is given them.
+secrets_dir = "$secrets"
+EOF
+chmod 0644 /etc/agentiik/runner.toml
+
+# ---------------------------------------------------------------------------------------------
+# The images: pulled from ghcr.io, or built from source where compose.build.yaml is in COMPOSE_FILE.
+
+say "pulling the images$(docker compose config --format json | grep -q '"build"' && echo ", and building the api, controller and runner images from source, which takes a few minutes")"
+docker compose pull --quiet --ignore-buildable
+docker compose build --quiet
+
+# ---------------------------------------------------------------------------------------------
+# The bus: its identity, written once by bus-init, and the server's configuration beside it.
+
+if [ ! -f "$data/bus/accounts.conf" ]; then
+  docker compose run --rm --no-deps api bus-init /agentiik/bus
+fi
+cat >"$data/nats.conf" <<EOF
+# Written by setup. The bus listens on this host's loopback alone, where the API, the controller and
+# the runner reach it, over TLS, since it is never reached in plaintext.
+listen: "127.0.0.1:4222"
+http: "127.0.0.1:8222"
+tls {
+  cert_file: "/etc/nats/tls/server.pem"
+  key_file: "/etc/nats/tls/server.key"
+}
+jetstream {
+  store_dir: "/data"
+}
+include "accounts.conf"
+EOF
+chmod 0644 "$data/nats.conf"
+
+# ---------------------------------------------------------------------------------------------
+# The database: migrated as its superuser, which creates the role the API and the controller
+# connect as, then the namespace and the default pool's labels, which v0.2 has no route for.
+
+docker compose up --detach --wait --wait-timeout 180 postgres nats
+docker compose run --rm --no-deps \
+  -e AGK_MIGRATE_DATABASE_URL='postgres://postgres@/agentiik?host=/run/postgresql' \
+  api migrate
+
+# The default pool is where a step that names no runs_on goes, and the installation creates it
+# with no label. A runner claims at least one label and only labels its pool carries, so no runner
+# could join it: setup gives it the runner's labels while it still carries none.
+docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U postgres -d agentiik \
+  -v namespace="$AGENTIIK_NAMESPACE" -v labels="$labels" <<'SQL'
+insert into namespaces (name) values (:'namespace') on conflict do nothing;
+update runner_pools set labels = string_to_array(:'labels', ',') where name = 'default' and labels = '{}';
+SQL
+say "the namespace $AGENTIIK_NAMESPACE exists, and the default pool carries $(docker compose exec -T postgres psql -tA -U postgres -d agentiik -c "select array_to_string(labels, ',') from runner_pools where name = 'default'")"
+
+# ---------------------------------------------------------------------------------------------
+# The API and the controller, recreated so that the API reads the new token's hash.
+
+docker compose up --detach --wait --wait-timeout 180 --force-recreate api controller
+
+api() { # method path [body]: one request as the operator, to this host whatever its name resolves to
+  local body=()
+  [ $# -lt 3 ] || body=(-H 'Content-Type: application/json' --data "$3")
+  # The token goes through standard input rather than an argument, which anybody on the host can read.
+  printf 'header = "Authorization: Bearer %s"\n' "$token" |
+    curl --config - --silent --show-error --fail-with-body \
+      --cacert "$data/trust/agentiik.pem" --resolve "$host:$port:127.0.0.1" \
+      -X "$1" "${body[@]}" "$public_url$2"
+}
+for _ in $(seq 60); do
+  api GET /api/v1/runner-pools >/dev/null 2>&1 && break
+  sleep 2
+done
+api GET /api/v1/runner-pools >/dev/null || die "the API did not answer at $public_url: docker compose logs api says why"
+say "the API answers at $public_url"
+
+# ---------------------------------------------------------------------------------------------
+# The runner: a join token from the default pool, traded by join, as root, for the runner's identity
+# in /etc/agentiik/runner.env and its key in /var/lib/agentiik/runner.key, both given to $agent.
+
+if [ ! -s /etc/agentiik/runner.env ]; then
+  claimed=$(printf '%s' "$labels" | sed 's/[^,][^,]*/"&"/g')
+  issued=$(api POST /api/v1/runner-pools/default/join-tokens "{\"labels\":[$claimed]}")
+  join_token=$(printf '%s' "$issued" | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
+  [ -n "$join_token" ] || die "the API issued no join token: $issued"
+  docker compose run --rm --no-deps --user 0:0 runner join --api "$public_url" --token "$join_token" --labels "$labels"
+fi
+
+docker compose up --detach --wait --wait-timeout 180
+for _ in $(seq 60); do
+  api GET /api/v1/runners 2>/dev/null | grep -Eq '"reported_state" *: *"ready"' && break
+  sleep 2
+done
+api GET /api/v1/runners | grep -Eq '"reported_state" *: *"ready"' || die "the runner has not reported ready: docker compose logs runner says why"
+say "the runner is ready"
+
+say "Agentiik $AGENTIIK_VERSION is running at $public_url. Clients trust $data/trust/agentiik.pem."
+if [ -t 3 ]; then
+  say "the operator token follows, shown this once: keep it, since only its hash is written down"
+fi
+printf '%s\n' "$token" >&3
