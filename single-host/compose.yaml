@@ -1,47 +1,147 @@
-# Agentiik on one Linux host. Run sudo ./setup once first: it writes every file mounted here.
+# Agentiik on one Linux host: docker compose up -d, with this file alone or with a .env beside it.
+# Every setting is a ${AGENTIIK_...:-default} below, and .env.example says what each one is for.
+# Change one in .env and run docker compose up -d again: every service that reads it is recreated.
+# https://github.com/agentiik/deploy/tree/main/single-host is the guide.
 name: agentiik
 
 x-agentiik: &agentiik
-  network_mode: host # so the runner reaches the API and the bus at the addresses the control plane uses
-  userns_mode: host
+  network_mode: host # the API, the controller and the runner reach the bus at AGENTIIK_HOST, as a runner elsewhere does
+  userns_mode: host # init writes files for uid 65532, which a daemon that remaps user namespaces would map elsewhere
   restart: unless-stopped
-  depends_on: { postgres: { condition: service_healthy }, nats: { condition: service_healthy } }
+
+# Each service that reads what init writes waits for it, and is restarted when a changed setting
+# recreates init: the new certificate, the new operator token's hash, a fresh join token.
+x-after-init: &after-init
+  init: { condition: service_completed_successfully, restart: true }
 
 services:
   postgres:
     image: postgres:17-alpine
-    network_mode: none # reached through its socket alone, which only the API and the controller mount, so it asks no password
+    network_mode: none # reached through its socket alone, which only init, the API and the controller mount, so it asks no password
+    userns_mode: host
     environment: { POSTGRES_DB: agentiik, POSTGRES_HOST_AUTH_METHOD: trust }
-    volumes: ["${AGENTIIK_DATA}/postgres:/var/lib/postgresql/data", "${AGENTIIK_DATA}/socket:/var/run/postgresql"]
+    volumes: [postgres:/var/lib/postgresql/data, socket:/var/run/postgresql]
     healthcheck: { test: pg_isready -h 127.0.0.1 -U postgres, interval: 2s }
     restart: unless-stopped
+
+  # Runs at every docker compose up, and brings the installation in line with the settings: the
+  # certificate for AGENTIIK_HOST, the keys, the bus identity, the migration, the namespace, the
+  # operator token's hash and a join token for the runner. Its log prints the certificate, and the
+  # operator token where it minted one.
+  init:
+    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.2.4}
+    command: [init]
+    user: "0:0" # to give each service's volume to the account that service runs as
+    network_mode: none
+    userns_mode: host
+    restart: "no"
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      AGK_INIT_DIR: /init
+      AGK_INIT_HOST: ${AGENTIIK_HOST:-localhost}
+      AGK_INIT_NAMESPACE: ${AGENTIIK_NAMESPACE:-demo}
+      AGK_OPERATOR_TOKEN: ${AGENTIIK_OPERATOR_TOKEN:-} # empty, init mints one where it stored none
+      AGK_MIGRATE_DATABASE_URL: postgres://postgres@/agentiik?host=/run/postgresql
+      AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
+    volumes:
+      - api:/init/api
+      - controller:/init/controller
+      - nats:/init/nats
+      - runner:/init/runner
+      - objects:/init/objects
+      - socket:/run/postgresql
+
   nats:
+    <<: *agentiik
     image: nats:2-alpine
-    network_mode: host # port 4222, where every runner reaches it
-    command: ["-c", "/nats/nats.conf"]
-    volumes: ["${AGENTIIK_DATA}/nats:/nats"]
+    command: ["-c", "/nats/nats.conf"] # written by init: 4222 on every interface, over TLS alone
+    depends_on: *after-init
+    volumes: [nats:/nats]
     healthcheck: { test: wget -qO /dev/null http://127.0.0.1:8222/healthz, interval: 2s }
-    restart: unless-stopped
+
   api:
     <<: *agentiik
-    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION}
-    env_file: [control-plane.env, api.env, listen.env] # listen.env: its address, which setup writes from .env
-    volumes: ["${AGENTIIK_DATA}/api:/agentiik", "${AGENTIIK_DATA}/objects:/objects", "${AGENTIIK_DATA}/socket:/run/postgresql"]
+    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.2.4}
+    depends_on: { <<: *after-init, nats: { condition: service_healthy } }
+    environment:
+      AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
+      AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
+      AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:4222 # the address every runner is handed too, on the certificate
+      AGK_BUS_CREDENTIALS_FILE: /agentiik/bus/control-plane.creds
+      AGK_BUS_ACCOUNT_SEED_FILE: /agentiik/bus/account.seed
+      AGK_OBJECTS_DIR: /objects
+      AGK_PRESIGN_KEY_FILE: /agentiik/presign-key
+      AGK_MASTER_KEY_FILE: /agentiik/master-key # the API's alone: the controller refuses to start with it
+      AGK_OPERATOR_TOKEN_FILE: /agentiik/operator-token.sha256
+      AGK_LISTEN: :${AGENTIIK_PORT:-8443}
+      AGK_PUBLIC_URL: https://${AGENTIIK_HOST:-localhost}:${AGENTIIK_PORT:-8443}
+      AGK_TLS_CERT_FILE: /agentiik/tls/server.pem
+      AGK_TLS_KEY_FILE: /agentiik/tls/server.key
+      # Set, the API is reached at the proxy's URL and serves plain HTTP on 127.0.0.1 alone, leaving
+      # the two lines above and the certificate unread.
+      AGK_PROXY_URL: ${AGENTIIK_PROXY_URL:-}
+      SSL_CERT_DIR: /agentiik/trust # the certificate init made, beside the system's authorities
+    volumes: [api:/agentiik, objects:/objects, socket:/run/postgresql]
+
   controller:
     <<: *agentiik
-    image: ghcr.io/agentiik/controller:${AGENTIIK_VERSION}
-    env_file: [control-plane.env]
-    volumes: ["${AGENTIIK_DATA}/controller:/agentiik", "${AGENTIIK_DATA}/objects:/objects", "${AGENTIIK_DATA}/socket:/run/postgresql"]
+    image: ghcr.io/agentiik/controller:${AGENTIIK_VERSION:-v0.2.4}
+    depends_on: { <<: *after-init, nats: { condition: service_healthy } }
+    environment:
+      AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
+      AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
+      AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:4222
+      AGK_BUS_CREDENTIALS_FILE: /agentiik/bus/control-plane.creds
+      AGK_OBJECTS_DIR: /objects
+      SSL_CERT_DIR: /agentiik/trust
+    volumes: [controller:/agentiik, objects:/objects, socket:/run/postgresql]
+
+  # Started as root, it takes the group of the Docker socket, drops to uid 65532 and serves, joining
+  # the pool default with the token init wrote where it has no identity yet, or where AGK_API changed.
   runner:
     <<: *agentiik
-    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION}
-    depends_on: [api]
-    group_add: ["${DOCKER_GID}"] # the group that owns the Docker socket
+    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.2.4}
+    depends_on: { <<: *after-init, api: { condition: service_started } }
     cap_drop: [ALL]
-    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
-    environment: { AGK_RUNNER_CONCURRENCY: "${AGENTIIK_RUNNER_CONCURRENCY}", SSL_CERT_DIR: /etc/agentiik/trust }
-    volumes: # the daemon resolves bind sources on the host, so each path is the same on both sides
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
+    environment:
+      AGK_API: ${AGENTIIK_PROXY_URL:-https://${AGENTIIK_HOST:-localhost}:${AGENTIIK_PORT:-8443}}
+      AGK_RUNNER_CONCURRENCY: ${AGENTIIK_RUNNER_CONCURRENCY:-2}
+      AGK_RUNNER_JOIN_TOKEN_FILE: /etc/agentiik/join-token
+      SSL_CERT_DIR: /etc/agentiik/trust:/etc/ssl/agentiik # init's certificate, and AGENTIIK_CA
+    labels:
+      # What the runner reads from the files below, here too so that a change to either recreates it.
+      dev.agentiik.require-userns-remap: ${AGENTIIK_REQUIRE_USERNS_REMAP:-false}
+      dev.agentiik.ca: ${AGENTIIK_CA:-}
+    configs:
+      - { source: runner-toml, target: /etc/agentiik/runner.toml }
+      - { source: ca, target: /etc/ssl/agentiik/ca.pem }
+    volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/agentiik:/var/lib/agentiik
-      - /run/agentiik/secrets:/run/agentiik/secrets
-      - /etc/agentiik:/etc/agentiik
+      - runner:/etc/agentiik # init's certificate and join token, and the identity join writes
+      - runner-state:/var/lib/agentiik # the runner's key and credential
+      # The work root, at the same path on both sides, since the daemon resolves the bind sources
+      # of every step's container on this host. The one path on the host this file names.
+      - /var/lib/agentiik/work:/var/lib/agentiik/work
+
+configs:
+  runner-toml:
+    content: |
+      # false gives up the floor on a daemon that does not remap user namespaces: root in a step's
+      # container is then root on this host. Remap the daemon and set AGENTIIK_REQUIRE_USERNS_REMAP=true.
+      require_userns_remap = ${AGENTIIK_REQUIRE_USERNS_REMAP:-false}
+  ca:
+    # Never empty, since Compose takes a config with no content for a file to bind.
+    content: |
+      # AGENTIIK_CA: authorities the runner trusts beside the system's, such as a proxy's own.
+      ${AGENTIIK_CA:-}
+
+volumes:
+  postgres:
+  socket:
+  api:
+  controller:
+  nats:
+  objects:
+  runner:
+  runner-state:

@@ -6,6 +6,12 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## Unreleased
+
+- `single-host/` installs `v0.2.4` from `compose.yaml` alone: every default inside it, one optional `.env` applied at each `docker compose up -d`, an `init` service in place of `setup`, `add-runner` and the other files, state in Docker volumes, and `AGENTIIK_PROXY_URL` in place of `AGENTIIK_PUBLIC_URL`.
+- `runner/`: a runner on another machine from one Compose file and its `.env`.
+- The single-host workflow runs the README with no `.env`, with one and behind Caddy, and checks that a changed setting takes effect.
+
 ## v0.2.3, 2026-09-26
 
 - `single-host/` installs `v0.2.3`.

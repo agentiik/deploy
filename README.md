@@ -9,7 +9,8 @@ installation.
 
 | Directory | What it installs |
 | --- | --- |
-| [single-host/](single-host/) | The whole installation on one Linux host with Docker Compose: [Profile A](https://agentiik.github.io/docs/#profile-a-a-single-host). Its README is the guide, from an empty host to a first workflow run. |
+| [single-host/](single-host/) | The whole installation on one Linux host, from one Compose file: [Profile A](https://agentiik.github.io/docs/#profile-a-a-single-host). Its README is the guide, from an empty host to a first workflow run. |
+| [runner/](runner/) | A runner on a Linux machine of its own, from one Compose file, joining any installation it reaches. |
 
 The other deployment profiles are specified at <https://agentiik.github.io/docs#deployment>, and the roadmap says which release brings each.
 
