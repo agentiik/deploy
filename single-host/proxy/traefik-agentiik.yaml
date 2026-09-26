@@ -2,7 +2,7 @@
 http:
   routers:
     agentiik:
-      rule: Host(`agentiik.example.com`) # the name AGENTIIK_PUBLIC_URL names
+      rule: Host(`agentiik.example.com`) # the name AGENTIIK_PROXY_URL names
       entryPoints: [websecure]
       service: agentiik
       tls:
