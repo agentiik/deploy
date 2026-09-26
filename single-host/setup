@@ -74,12 +74,25 @@ fi
 say "installing Agentiik $AGENTIIK_VERSION at $public_url, keeping its state in $data"
 
 # ---------------------------------------------------------------------------------------------
-# Directories, each owned by whoever reads it and closed to everybody else.
+# Directories, one per service, each owned by whoever reads it and closed to everybody else:
+#
+#   api/          the API's keys, its certificate in tls/, the bus identity in bus/, trust/
+#   controller/   the database password, the control plane's bus credential in bus/, trust/
+#   nats/         the server's configuration, the bus's certificate and accounts, jetstream/
+#   postgres/     the database, and socket/ where the API and the controller reach it
+#   objects/      the built-in object store, shared by the API and the controller
+#
+# The runner's are at the paths its constants name, the same on the host and in its container, and
+# /etc/agentiik/trust holds the certificate for the runner and for agk.
 
-install -d -m 0755 "$data" "$data/trust" "$data/jetstream"
-install -d -m 0700 -o "$agent" -g "$agent" "$data/api" "$data/bus" "$data/objects" "$data/tls"
-# The runner's, at the paths the runner's constants name, the same on the host and in its container.
-install -d -m 0755 /etc/agentiik
+api_dir=$data/api
+controller_dir=$data/controller
+nats_dir=$data/nats
+install -d -m 0755 "$data" "$data/socket"
+install -d -m 0700 "$nats_dir" "$nats_dir/jetstream" "$data/postgres"
+install -d -m 0700 -o "$agent" -g "$agent" "$api_dir" "$api_dir/bus" "$api_dir/tls" "$controller_dir" "$controller_dir/bus" "$data/objects"
+install -d -m 0755 -o "$agent" -g "$agent" "$api_dir/trust" "$controller_dir/trust"
+install -d -m 0755 /etc/agentiik /etc/agentiik/trust
 install -d -m 0700 -o "$agent" -g "$agent" /var/lib/agentiik
 
 # The tmpfs secret values are written on before a step is given them. The runner refuses one that is
@@ -94,9 +107,9 @@ say "the secrets tmpfs is mounted at $secrets, and /etc/fstab mounts it at boot"
 # ---------------------------------------------------------------------------------------------
 # The certificate. A single host has no terminator in front: the API serves TLS itself, and the bus
 # on the same certificate, which setup makes and signs itself. Clients trust that one certificate,
-# as trust/agentiik.pem, rather than an authority that could sign others. A certificate from an
-# authority clients already trust replaces tls/server.pem and tls/server.key, and trust/agentiik.pem
-# then holds that authority, or nothing where the system's own roots include it.
+# as /etc/agentiik/trust/agentiik.pem, rather than an authority that could sign others. A certificate
+# from an authority clients already trust replaces api/tls/server.pem and api/tls/server.key, and
+# the trust directories then hold that authority, or nothing where the system's own roots include it.
 
 san="DNS:localhost,IP:127.0.0.1"
 case "$host" in
@@ -104,11 +117,11 @@ localhost | 127.0.0.1) ;;
 *[!0-9.]*) san="DNS:$host,$san" ;;
 *) san="IP:$host,$san" ;;
 esac
-if [ -f "$data/tls/server.pem" ] && ! openssl x509 -in "$data/tls/server.pem" -noout -ext subjectAltName 2>/dev/null | grep -Eq "(DNS|IP Address):$host(,|\$)"; then
-  say "the certificate in $data/tls is not issued to $host, so a new one replaces it: every client trusts the new trust/agentiik.pem"
-  rm -f "$data/tls/server.pem" "$data/tls/server.key"
+if [ -f "$api_dir/tls/server.pem" ] && ! openssl x509 -in "$api_dir/tls/server.pem" -noout -ext subjectAltName 2>/dev/null | grep -Eq "(DNS|IP Address):$host(,|\$)"; then
+  say "the certificate in $api_dir/tls is not issued to $host, so a new one replaces it: every client trusts the new /etc/agentiik/trust/agentiik.pem"
+  rm -f "$api_dir/tls/server.pem" "$api_dir/tls/server.key"
 fi
-if [ ! -f "$data/tls/server.pem" ]; then
+if [ ! -f "$api_dir/tls/server.pem" ]; then
   config=$(mktemp)
   cat >"$config" <<EOF
 [req]
@@ -124,14 +137,19 @@ keyUsage = critical,digitalSignature
 extendedKeyUsage = serverAuth
 EOF
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
-    -config "$config" -keyout "$data/tls/server.key" -out "$data/tls/server.pem" 2>/dev/null
+    -config "$config" -keyout "$api_dir/tls/server.key" -out "$api_dir/tls/server.pem" 2>/dev/null
   rm -f "$config"
   say "made a certificate for $san, valid 825 days"
 fi
-chown "$agent:$agent" "$data/tls/server.pem" "$data/tls/server.key"
-chmod 0644 "$data/tls/server.pem"
-chmod 0600 "$data/tls/server.key"
-install -m 0644 "$data/tls/server.pem" "$data/trust/agentiik.pem"
+chown "$agent:$agent" "$api_dir/tls/server.pem" "$api_dir/tls/server.key"
+chmod 0644 "$api_dir/tls/server.pem"
+chmod 0600 "$api_dir/tls/server.key"
+for trust in "$api_dir/trust" "$controller_dir/trust" /etc/agentiik/trust; do
+  install -m 0644 "$api_dir/tls/server.pem" "$trust/agentiik.pem"
+done
+# NATS runs as root and reads its own copies.
+install -m 0644 "$api_dir/tls/server.pem" "$nats_dir/server.pem"
+install -m 0600 "$api_dir/tls/server.key" "$nats_dir/server.key"
 
 # ---------------------------------------------------------------------------------------------
 # Keys and passwords, each in a file its owner alone can read, since every program refuses a secret
@@ -147,15 +165,15 @@ secret_file() { # path owner command...: writes what command prints, once
   chmod 0600 "$path"
 }
 master_key() { printf 'id: %s\nkey: %s\n' "$(date -u +%Y-%m)" "$(openssl rand -base64 32)"; }
-secret_file "$data/postgres-password" root openssl rand -hex 32
-secret_file "$data/database-password" "$agent" openssl rand -hex 32
-secret_file "$data/api/presign-key" "$agent" openssl rand -base64 32
-secret_file "$data/api/master-key" "$agent" master_key
+secret_file "$api_dir/database-password" "$agent" openssl rand -hex 32
+install -m 0600 -o "$agent" -g "$agent" "$api_dir/database-password" "$controller_dir/database-password"
+secret_file "$api_dir/presign-key" "$agent" openssl rand -base64 32
+secret_file "$api_dir/master-key" "$agent" master_key
 
 token="agk_op_$(openssl rand -hex 24)"
-(umask 077 && printf %s "$token" | sha256sum | cut -d' ' -f1 >"$data/api/operator-token.sha256")
-chown "$agent:$agent" "$data/api/operator-token.sha256"
-say "wrote the master key, the presign key, the database passwords and a new operator token's hash"
+(umask 077 && printf %s "$token" | sha256sum | cut -d' ' -f1 >"$api_dir/operator-token.sha256")
+chown "$agent:$agent" "$api_dir/operator-token.sha256"
+say "wrote the master key, the presign key, the database password and a new operator token's hash"
 
 # ---------------------------------------------------------------------------------------------
 # The runner's host settings.
@@ -191,37 +209,44 @@ docker compose build --quiet
 # ---------------------------------------------------------------------------------------------
 # The bus: its identity, written once by bus-init, and the server's configuration beside it.
 
-if [ ! -f "$data/bus/accounts.conf" ]; then
+if [ ! -f "$api_dir/bus/accounts.conf" ]; then
   docker compose run --rm --no-deps api bus-init /agentiik/bus
 fi
-cat >"$data/nats.conf" <<EOF
+# The accounts for the server, and the control plane's credential for the controller, which is also
+# how a credential bus-credential renewed reaches the controller: run setup again.
+install -m 0600 "$api_dir/bus/accounts.conf" "$nats_dir/accounts.conf"
+install -m 0600 -o "$agent" -g "$agent" "$api_dir/bus/control-plane.creds" "$controller_dir/bus/control-plane.creds"
+cat >"$nats_dir/nats.conf" <<EOF
 # Written by setup. The bus listens on this host's loopback alone, where the API, the controller and
 # the runner reach it, over TLS, since it is never reached in plaintext.
 listen: "127.0.0.1:4222"
 http: "127.0.0.1:8222"
 tls {
-  cert_file: "/etc/nats/tls/server.pem"
-  key_file: "/etc/nats/tls/server.key"
+  cert_file: "/nats/server.pem"
+  key_file: "/nats/server.key"
 }
 jetstream {
-  store_dir: "/data"
+  store_dir: "/nats/jetstream"
 }
 include "accounts.conf"
 EOF
-chmod 0644 "$data/nats.conf"
+chmod 0644 "$nats_dir/nats.conf"
 
 # ---------------------------------------------------------------------------------------------
 # The database: migrated as its superuser, which creates the role the API and the controller
-# connect as, then the namespace and the default pool's labels, which v0.2 has no route for.
+# connect as, then the namespace and the default pool's labels.
 
 docker compose up --detach --wait --wait-timeout 180 postgres nats
 docker compose run --rm --no-deps \
   -e AGK_MIGRATE_DATABASE_URL='postgres://postgres@/agentiik?host=/run/postgresql' \
   api migrate
 
-# The default pool is where a step that names no runs_on goes, and the installation creates it
-# with no label. A runner claims at least one label and only labels its pool carries, so no runner
-# could join it: setup gives it the runner's labels while it still carries none.
+# Two gaps of v0.2.0, filled here with SQL until agentiik/agentiik#336 ships, which adds
+# agentiik-api namespace create and lets a runner with no label join the default pool; this block is
+# then replaced by that verb. v0.2.0 has no way to create a namespace. And the default pool, where a
+# step that names no runs_on goes, is created with no label, while a runner claims at least one and
+# only labels its pool carries, so no runner could join it: setup gives it the runner's labels while
+# it still carries none.
 docker compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U postgres -d agentiik \
   -v namespace="$AGENTIIK_NAMESPACE" -v labels="$labels" <<'SQL'
 insert into namespaces (name) values (:'namespace') on conflict do nothing;
@@ -240,7 +265,7 @@ api() { # method path [body]: one request as the operator, to this host whatever
   # The token goes through standard input rather than an argument, which anybody on the host can read.
   printf 'header = "Authorization: Bearer %s"\n' "$token" |
     curl --config - --silent --show-error --fail-with-body \
-      --cacert "$data/trust/agentiik.pem" --resolve "$host:$port:127.0.0.1" \
+      --cacert /etc/agentiik/trust/agentiik.pem --resolve "$host:$port:127.0.0.1" \
       -X "$1" "${body[@]}" "$public_url$2"
 }
 for _ in $(seq 60); do
@@ -270,7 +295,7 @@ done
 api GET /api/v1/runners | grep -Eq '"reported_state" *: *"ready"' || die "the runner has not reported ready: docker compose logs runner says why"
 say "the runner is ready"
 
-say "Agentiik $AGENTIIK_VERSION is running at $public_url. Clients trust $data/trust/agentiik.pem."
+say "Agentiik $AGENTIIK_VERSION is running at $public_url. Clients trust /etc/agentiik/trust/agentiik.pem."
 if [ -t 3 ]; then
   say "the operator token follows, shown this once: keep it, since only its hash is written down"
 fi

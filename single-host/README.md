@@ -40,7 +40,7 @@ export AGENTIIK_TOKEN
 setup: installing Agentiik v0.2.1 at https://localhost:8443, keeping its state in /srv/agentiik
 setup: the secrets tmpfs is mounted at /run/agentiik/secrets, and /etc/fstab mounts it at boot
 setup: made a certificate for DNS:localhost,IP:127.0.0.1, valid 825 days
-setup: wrote the master key, the presign key, the database passwords and a new operator token's hash
+setup: wrote the master key, the presign key, the database password and a new operator token's hash
 setup: pulling the images
 The installation's bus identity is in /agentiik/bus.
 ...
@@ -55,7 +55,7 @@ Its key is in /var/lib/agentiik/runner.key and its credential in /etc/agentiik/r
 The credential is accepted until 2026-10-26T09:00:06Z.
 ...
 setup: the runner is ready
-setup: Agentiik v0.2.1 is running at https://localhost:8443. Clients trust /srv/agentiik/trust/agentiik.pem.
+setup: Agentiik v0.2.1 is running at https://localhost:8443. Clients trust /etc/agentiik/trust/agentiik.pem.
 ```
 
 The operator token is the one credential of a v0.2 installation: it may do everything, and only its SHA-256 is written down. Save it in a password manager now, `echo "$AGENTIIK_TOKEN"`. Lost, it is replaced by running `sudo ./setup` again, which keeps everything else and mints a new one.
@@ -81,10 +81,10 @@ agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.1       "/usr/local/bin/agk
 go install github.com/agentiik/agentiik/cmd/agk@v0.2.1
 export PATH="$PATH:$(go env GOPATH)/bin"
 export AGENTIIK_SERVER=https://localhost:8443
-export SSL_CERT_DIR=/srv/agentiik/trust
+export SSL_CERT_DIR=/etc/agentiik/trust
 ```
 
-`brew install agentiik/tap/agk` installs the same command line. `AGENTIIK_SERVER` is the address, `AGENTIIK_TOKEN` the credential, and `SSL_CERT_DIR` adds the certificate `setup` made to the authorities `agk` trusts on Linux. From another machine, copy `/srv/agentiik/trust/agentiik.pem` there and trust it: `SSL_CERT_DIR` on Linux, and on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain agentiik.pem`.
+`brew install agentiik/tap/agk` installs the same command line. `AGENTIIK_SERVER` is the address, `AGENTIIK_TOKEN` the credential, and `SSL_CERT_DIR` adds the certificate `setup` made to the authorities `agk` trusts on Linux. From another machine, copy `/etc/agentiik/trust/agentiik.pem` there and trust it: `SSL_CERT_DIR` on Linux, and on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain agentiik.pem`.
 
 ## Run a first workflow
 
@@ -149,23 +149,24 @@ docker compose stop
 docker compose up --detach --wait
 ```
 
-A backup is the database and the files under `/srv/agentiik`, taken together, since a run restored without its objects points at artifacts that no longer exist:
+A backup is the database and the files under `/srv/agentiik`, one directory per service, taken together, since a run restored without its objects points at artifacts that no longer exist:
 
 <!-- ci -->
 ```sh
 docker compose exec -T postgres pg_dump -U postgres -Fc agentiik > agentiik.dump
-sudo tar -C /srv/agentiik -czf agentiik-files.tar.gz api bus objects tls trust database-password postgres-password
+sudo tar -C /srv/agentiik -czf agentiik-files.tar.gz api controller nats objects
 ```
 
 The archive holds the master key, which opens every secret in the dump: keep the two apart, or encrypt them.
 
 To upgrade, set `AGENTIIK_VERSION` in `.env` to the new version and run `sudo ./setup` again: it pulls, migrates, restarts, and prints a new operator token.
 
-The bus credential of the API and the controller expires after 90 days, and the API warns from 14 days before. To renew it:
+The bus credential of the API and the controller expires after 90 days, and the API warns from 14 days before. `bus-credential` renews it, and `setup` hands it to the controller and restarts both:
 
 ```sh
 docker compose run --rm --no-deps api bus-credential /agentiik/bus
-docker compose restart api controller
+AGENTIIK_TOKEN="$(sudo ./setup)"
+export AGENTIIK_TOKEN
 ```
 
 To uninstall, removing every container, image, key and piece of data:
@@ -183,12 +184,12 @@ sudo rm -rf /srv/agentiik /var/lib/agentiik /etc/agentiik /run/agentiik
 | What | Today | When |
 | --- | --- | --- |
 | Users, groups, sign-in | One operator token may do everything. | v0.3.0 brings principals and a bootstrap token. |
-| Creating a namespace | No route yet: `setup` creates `AGENTIIK_NAMESPACE`, and another is one line, `docker compose exec -T postgres psql -U postgres -d agentiik -c "insert into namespaces (name) values ('team')"`. | With the access model. |
-| The default pool | Created with no label, and a runner claims at least one, so `setup` gives it the runner's labels. | A decision the documentation has to make. |
+| Creating a namespace | No verb yet: `setup` creates `AGENTIIK_NAMESPACE` with SQL, and another is one line, `docker compose exec -T postgres psql -U postgres -d agentiik -c "insert into namespaces (name) values ('team')"`. | `agentiik-api namespace create`, [agentiik#336](https://github.com/agentiik/agentiik/issues/336), which `setup` will use. |
+| The default pool | Created with no label, and a runner claims at least one, so `setup` gives it the runner's labels. | A runner with no label joins it, [agentiik#336](https://github.com/agentiik/agentiik/issues/336). |
 | The console | Not part of this stack. | Its own releases. |
 | Object store | On disk under `/srv/agentiik/objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |
-| A certificate from a public authority | `setup` signs its own. Replace `tls/server.pem` and `tls/server.key` with yours, put its authority in `trust/` or empty it, and restart the API and NATS. | |
+| A certificate from a public authority | `setup` signs its own. Replace `/srv/agentiik/api/tls/server.pem` and `server.key` with yours and run `sudo ./setup` again; clients that already trust its authority then need no `agentiik.pem`. | |
 
 ## Build from source instead
 

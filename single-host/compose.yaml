@@ -1,86 +1,48 @@
 # Agentiik on one Linux host. Run sudo ./setup once first: it writes every file mounted here.
 name: agentiik
 
-x-control-plane: &control-plane
-  network_mode: host # the runner reaches the API and the bus at the addresses they are given
+x-agentiik: &agentiik
+  network_mode: host # so the runner reaches the API and the bus at the addresses the control plane uses
   userns_mode: host
   restart: unless-stopped
-  depends_on:
-    postgres: { condition: service_healthy }
-    nats: { condition: service_healthy }
+  depends_on: { postgres: { condition: service_healthy }, nats: { condition: service_healthy } }
 
 services:
   postgres:
     image: postgres:17-alpine
-    network_mode: none # reached through its socket alone
-    environment:
-      POSTGRES_DB: agentiik
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
-    volumes:
-      - ${AGENTIIK_DATA}/postgres:/var/lib/postgresql/data
-      - ${AGENTIIK_DATA}/postgres-password:/run/secrets/postgres-password:ro
-      - postgres-socket:/var/run/postgresql
+    network_mode: none # reached through its socket alone, which only the API and the controller mount, so it asks no password
+    environment: { POSTGRES_DB: agentiik, POSTGRES_HOST_AUTH_METHOD: trust }
+    volumes: ["${AGENTIIK_DATA}/postgres:/var/lib/postgresql/data", "${AGENTIIK_DATA}/socket:/var/run/postgresql"]
     healthcheck: { test: pg_isready -h 127.0.0.1 -U postgres, interval: 2s }
     restart: unless-stopped
-
   nats:
     image: nats:2-alpine
     network_mode: host # listens on 127.0.0.1:4222 alone
-    command: ["-c", "/etc/nats/nats.conf"]
-    volumes:
-      - ${AGENTIIK_DATA}/nats.conf:/etc/nats/nats.conf:ro
-      - ${AGENTIIK_DATA}/bus/accounts.conf:/etc/nats/accounts.conf:ro
-      - ${AGENTIIK_DATA}/tls:/etc/nats/tls:ro
-      - ${AGENTIIK_DATA}/jetstream:/data
+    command: ["-c", "/nats/nats.conf"]
+    volumes: ["${AGENTIIK_DATA}/nats:/nats"]
     healthcheck: { test: wget -qO /dev/null http://127.0.0.1:8222/healthz, interval: 2s }
     restart: unless-stopped
-
   api:
-    <<: *control-plane
+    <<: *agentiik
     image: ghcr.io/agentiik/api:${AGENTIIK_VERSION}
     env_file: [control-plane.env, api.env]
-    environment:
-      AGK_PUBLIC_URL: https://${AGENTIIK_HOST}:${AGENTIIK_PORT}
-      AGK_LISTEN: :${AGENTIIK_PORT}
-    volumes:
-      - postgres-socket:/run/postgresql
-      - ${AGENTIIK_DATA}/database-password:/agentiik/database-password:ro
-      - ${AGENTIIK_DATA}/objects:/agentiik/objects
-      - ${AGENTIIK_DATA}/trust:/agentiik/trust:ro
-      - ${AGENTIIK_DATA}/bus:/agentiik/bus
-      - ${AGENTIIK_DATA}/api:/agentiik/api:ro
-      - ${AGENTIIK_DATA}/tls:/agentiik/tls:ro
-
+    environment: { AGK_PUBLIC_URL: "https://${AGENTIIK_HOST}:${AGENTIIK_PORT}", AGK_LISTEN: ":${AGENTIIK_PORT}" }
+    volumes: ["${AGENTIIK_DATA}/api:/agentiik", "${AGENTIIK_DATA}/objects:/objects", "${AGENTIIK_DATA}/socket:/run/postgresql"]
   controller:
-    <<: *control-plane
+    <<: *agentiik
     image: ghcr.io/agentiik/controller:${AGENTIIK_VERSION}
     env_file: [control-plane.env]
-    volumes:
-      - postgres-socket:/run/postgresql
-      - ${AGENTIIK_DATA}/database-password:/agentiik/database-password:ro
-      - ${AGENTIIK_DATA}/objects:/agentiik/objects
-      - ${AGENTIIK_DATA}/trust:/agentiik/trust:ro
-      - ${AGENTIIK_DATA}/bus/control-plane.creds:/agentiik/bus/control-plane.creds:ro
-
+    volumes: ["${AGENTIIK_DATA}/controller:/agentiik", "${AGENTIIK_DATA}/objects:/objects", "${AGENTIIK_DATA}/socket:/run/postgresql"]
   runner:
+    <<: *agentiik
     image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION}
-    network_mode: host
-    userns_mode: host
-    group_add: ["${DOCKER_GID}"] # the group that owns the Docker socket, which setup finds
+    depends_on: [api]
+    group_add: ["${DOCKER_GID}"] # the group that owns the Docker socket
     cap_drop: [ALL]
     cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
-    environment:
-      AGK_RUNNER_CONCURRENCY: ${AGENTIIK_RUNNER_CONCURRENCY}
-      SSL_CERT_DIR: /etc/ssl/agentiik
-    volumes:
+    environment: { AGK_RUNNER_CONCURRENCY: "${AGENTIIK_RUNNER_CONCURRENCY}", SSL_CERT_DIR: /etc/agentiik/trust }
+    volumes: # the daemon resolves bind sources on the host, so each path is the same on both sides
       - /var/run/docker.sock:/var/run/docker.sock
-      # the daemon resolves bind sources on the host: the same paths on both sides
       - /var/lib/agentiik:/var/lib/agentiik
       - /run/agentiik/secrets:/run/agentiik/secrets
       - /etc/agentiik:/etc/agentiik
-      - ${AGENTIIK_DATA}/trust:/etc/ssl/agentiik:ro
-    restart: unless-stopped
-    depends_on: [api]
-
-volumes:
-  postgres-socket:
