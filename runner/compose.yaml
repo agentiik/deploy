@@ -1,6 +1,7 @@
 # An Agentiik runner on a Linux machine of its own, for an installation elsewhere: docker compose up -d,
 # with a .env beside this file that names the installation, and a join token for the first start.
 # .env.example says what each setting is for. Change one in .env and run docker compose up -d again.
+# The state is kept in AGENTIIK_DATA, ./data beside this file by default.
 # https://github.com/agentiik/deploy/tree/main/single-host#add-a-runner-on-another-machine is the guide.
 name: agentiik-runner
 
@@ -8,8 +9,8 @@ services:
   # Started as root, it takes the group of the Docker socket, drops to uid 65532 and serves. Where
   # it has no identity yet, or where AGENTIIK_API or AGENTIIK_LABELS changed, it joins with the token.
   runner:
-    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.2.4}
-    network_mode: host # the API and the bus at the addresses this machine reaches them at
+    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.2.5}
+    network_mode: host # the API and the bus at the addresses this machine reaches them at; the runner listens on nothing
     userns_mode: host
     restart: unless-stopped
     cap_drop: [ALL]
@@ -29,10 +30,10 @@ services:
       - { source: ca, target: /etc/ssl/agentiik/ca.pem }
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - config:/etc/agentiik # the identity join writes
-      - state:/var/lib/agentiik # the runner's key and credential
+      - "${AGENTIIK_DATA:-./data}/runner:/etc/agentiik" # the identity join writes
+      - "${AGENTIIK_DATA:-./data}/runner-state:/var/lib/agentiik" # the runner's key and credential
       # The work root, at the same path on both sides, since the daemon resolves the bind sources
-      # of every step's container on this machine. The one path on the machine this file names.
+      # of every step's container on this machine. The one path outside AGENTIIK_DATA this file names.
       - /var/lib/agentiik/work:/var/lib/agentiik/work
 
 configs:
@@ -47,7 +48,3 @@ configs:
       # AGENTIIK_CA: the installation's certificate, which its bus serves, and the proxy's authority
       # where one is in front and the system does not trust it.
       ${AGENTIIK_CA:-}
-
-volumes:
-  config:
-  state:
