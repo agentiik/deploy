@@ -25,8 +25,7 @@ services:
   api:
     <<: *agentiik
     image: ghcr.io/agentiik/api:${AGENTIIK_VERSION}
-    env_file: [control-plane.env, api.env]
-    environment: { AGK_PUBLIC_URL: "https://${AGENTIIK_HOST}:${AGENTIIK_PORT}", AGK_LISTEN: ":${AGENTIIK_PORT}" }
+    env_file: [control-plane.env, api.env, listen.env] # listen.env: its address, which setup writes from .env
     volumes: ["${AGENTIIK_DATA}/api:/agentiik", "${AGENTIIK_DATA}/objects:/objects", "${AGENTIIK_DATA}/socket:/run/postgresql"]
   controller:
     <<: *agentiik

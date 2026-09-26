@@ -6,6 +6,10 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## Unreleased
+
+- `single-host/`: behind a reverse proxy that terminates TLS, chosen by `AGENTIIK_PUBLIC_URL` in `.env`, with the API in plain HTTP on the loopback, the bus still on 4222 with its own TLS, ready configurations for Caddy, nginx and Traefik in `proxy/`, and the README run by CI behind Caddy too.
+
 ## v0.2.1, 2026-09-26
 
 - `single-host/`: an installation on one Linux host with Docker Compose (PostgreSQL, NATS, the API, the controller and a runner), a `setup` script that prepares the host and joins the runner, and a README that is its user guide, whose commands CI runs verbatim through a first workflow run.

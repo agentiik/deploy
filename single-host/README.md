@@ -11,7 +11,7 @@ Every command below is run, exactly as written here, on a fresh Ubuntu machine b
 | A Linux host, x86-64 or arm64 | macOS and Windows are not runner hosts: the runner hands the Docker daemon paths on the host to bind, which Docker Desktop's virtual machine cannot see. `agk` runs anywhere. |
 | Docker Engine 28 or later, with the Compose plugin | Every component is a container, and so is every step of every workflow. |
 | `sudo`, `openssl`, `curl`, `git` | `setup` writes under `/etc`, `/var/lib`, `/run` and `/srv`, and makes the certificate and the keys. |
-| Ports 8443 and 4222 open, and 8222 free on the loopback | The API serves HTTPS on 8443 (`AGENTIIK_PORT`) to `agk` and to every runner, and the bus listens on 4222 for every runner, both on every interface: open them to the machines that reach the installation, and to nothing else. The bus's health check listens on `127.0.0.1:8222` alone. |
+| Ports 8443 and 4222 open, and 8222 free on the loopback | The API serves HTTPS on 8443 (`AGENTIIK_PORT`) to `agk` and to every runner, and the bus listens on 4222 for every runner, both on every interface: open them to the machines that reach the installation, and to nothing else. Behind a reverse proxy, the proxy's 443 takes the place of 8443, which then listens on the loopback alone. The bus's health check listens on `127.0.0.1:8222` alone. |
 | Go 1.27, or Homebrew, where you run `agk` | To install the command line. `agk push` also needs a Docker daemon, to resolve image tags to digests. |
 
 ## Install
@@ -27,6 +27,43 @@ cp .env.example .env
 ```
 
 `.env` holds the choices this host makes. The one to change first is `AGENTIIK_HOST`, the name `agk` and every runner reach the API and the bus at, which the certificate is issued to; `localhost` works for trying it on one machine, and a runner on another machine needs a name or an address that machine reaches. `AGENTIIK_VERSION` is the one variable that picks what runs, and every other file follows it.
+
+### Behind a reverse proxy
+
+Where a reverse proxy terminates TLS in front of the API with a certificate of its own, one line of `.env` says so, `AGENTIIK_PUBLIC_URL`, and the proxy starts before `setup`. Caddy, in a container on this host:
+
+<!-- ci: proxy -->
+```sh
+sed -i 's|^AGENTIIK_HOST=.*|AGENTIIK_HOST=agentiik.example.com|; s|^AGENTIIK_PUBLIC_URL=.*|AGENTIIK_PUBLIC_URL=https://agentiik.example.com|' .env
+docker run --detach --name caddy --restart unless-stopped --network host --env-file .env \
+  -v "$PWD/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" -v caddy-data:/data caddy:2
+export AGENTIIK_SERVER=https://agentiik.example.com
+export SSL_CERT_DIR=/etc/agentiik/trust
+```
+
+`AGENTIIK_PUBLIC_URL` is the address `agk`, every runner and every presigned URL use, and the API serves plain HTTP on `127.0.0.1:8443` (`AGENTIIK_PORT`) alone, for the proxy to forward to. `AGENTIIK_HOST` stays the name runners reach the bus at, usually the same one: the bus speaks NATS rather than HTTP, so it is not proxied, and keeps its own TLS on 4222 with the certificate `setup` makes.
+
+Only where the proxy's certificate is from an authority the system does not trust, such as Caddy's own for an IP address or a name like `agentiik.internal`, does that authority join `/etc/agentiik/trust`, where the runner and `agk` look, and `curl` trust it too:
+
+<!-- ci: proxy -->
+```sh
+sudo mkdir -p /etc/agentiik/trust
+docker exec caddy sh -c 'until [ -s /data/caddy/pki/authorities/local/root.crt ]; do sleep 1; done; cat /data/caddy/pki/authorities/local/root.crt' |
+  sudo tee /etc/agentiik/trust/proxy.pem >/dev/null
+export CURL_CA_BUNDLE=/etc/agentiik/trust/proxy.pem
+```
+
+| Proxy | Files in `proxy/` | Where they go |
+| --- | --- | --- |
+| Caddy | `Caddyfile` | Mounted as above, or `/etc/caddy/Caddyfile` with `AGENTIIK_PUBLIC_URL` in Caddy's environment. Caddy obtains and renews the certificate itself. |
+| nginx | `nginx.conf` | `/etc/nginx/conf.d/agentiik.conf`, with your name and certificate in place of `agentiik.example.com`. |
+| Traefik | `traefik.yaml`, `traefik-agentiik.yaml` | `/etc/traefik/`, with your name and an address for Let's Encrypt in place of the examples. |
+
+Each sets what the API needs of a proxy: a step's log stream passed on as it is written, with no timeout under an hour; the path passed undecoded, since an artifact's URI is one segment whose slashes are `%2F`; and no body size limit, since a runner uploads artifacts of up to 5 GiB and the API bounds each route itself. The API reads no `X-Forwarded-*` header: every address it hands out is minted on `AGENTIIK_PUBLIC_URL`.
+
+Open the proxy's 443 and the bus's 4222 to the machines that reach the installation, and nothing else: 8443 listens on the loopback alone. A runner on another machine trusts the proxy's certificate for the API through the system's own authorities, or `proxy.pem` above, and `agentiik.pem`, which `setup` makes, for the bus.
+
+### Start it
 
 <!-- ci -->
 ```sh
@@ -80,11 +117,16 @@ agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.1       "/usr/local/bin/agk
 ```sh
 go install github.com/agentiik/agentiik/cmd/agk@v0.2.1
 export PATH="$PATH:$(go env GOPATH)/bin"
-export AGENTIIK_SERVER=https://localhost:8443
-export SSL_CERT_DIR=/etc/agentiik/trust
 ```
 
-`brew install agentiik/tap/agk` installs the same command line. `AGENTIIK_SERVER` is the address, `AGENTIIK_TOKEN` the credential, and `SSL_CERT_DIR` adds the certificate `setup` made to the authorities `agk` trusts on Linux. From another machine, copy `/etc/agentiik/trust/agentiik.pem` there and trust it: `SSL_CERT_DIR` on Linux, and on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain agentiik.pem`.
+<!-- ci: direct -->
+```sh
+export AGENTIIK_SERVER=https://localhost:8443
+export SSL_CERT_DIR=/etc/agentiik/trust
+export CURL_CA_BUNDLE=/etc/agentiik/trust/agentiik.pem
+```
+
+`brew install agentiik/tap/agk` installs the same command line. `AGENTIIK_SERVER` is the address, `AGENTIIK_TOKEN` the credential, and `SSL_CERT_DIR` adds the certificate `setup` made to the authorities `agk` trusts on Linux, as `CURL_CA_BUNDLE` does for `curl`. Behind a reverse proxy, they were set [above](#behind-a-reverse-proxy). From another machine, copy `/etc/agentiik/trust/agentiik.pem` there and trust it: `SSL_CERT_DIR` on Linux, and on macOS `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain agentiik.pem`.
 
 ## Run a first workflow
 
@@ -102,12 +144,14 @@ metadata:
 outputs:
   greeting:
     from: { step: greet, port: out }
+    retain: 7d
 steps:
   greet:
     image: alpine:3.21
     script:
       - echo "greet runs on $(uname -m)" >&2
       - echo "hello from ${AGK_STEP}"
+      - echo "a file from ${AGK_STEP}" > /agk/out/files/greeting.txt
     outputs: [out]
 EOF
 git add agentiik.yaml && git commit -qm "A first workflow"
@@ -116,6 +160,7 @@ agk run --namespace demo 2>&1 | tee ~/first-run.log
 run=$(awk '/ started at / { print $2; exit }' ~/first-run.log)
 agk status "$run"
 agk logs "$run"
+curl -fsSL -H "Authorization: Bearer $AGENTIIK_TOKEN" "$AGENTIIK_SERVER/api/v1/artifacts/agk%3A%2F%2Frun%2F$run%2Fgreet%2Fout%2Fgreeting.txt"
 cd -
 ```
 
@@ -135,33 +180,36 @@ greet  succeeded, out 1 sha256:2ec2167f189f
 output greeting: 1 item
 greet | greet runs on x86_64
 greet | driver: the container exited 0: the output envelopes are published
+a file from greet
 ```
 
-The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows.
+The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows. A file it leaves in `/agk/out/files/` becomes an artifact of that output, kept for the seven days `retain` says, which `curl` fetches last by its URI, `agk://run/<run>/greet/out/greeting.txt`, percent-encoded as one segment of the path.
 
 ## Add a runner on another machine
 
-Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on ports 8443 and 4222; nothing connects to it. It joins a pool with a single-use token the operator issues, and takes the steps whose `runs_on` names its labels.
+Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on ports 8443 and 4222, or the proxy's 443 in place of 8443; nothing connects to it. It joins a pool with a single-use token the operator issues, and takes the steps whose `runs_on` names its labels.
 
 On the installation's host, a pool for the new machine's label, and a join token for it, valid an hour:
 
 <!-- ci -->
 ```sh
-curl -fsS --cacert /etc/agentiik/trust/agentiik.pem -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
+curl -fsS -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
   --data '{"pool":{"name":"lab","labels":["zone=lab"],"namespaces":[],"resource_ceilings":{}}}' "$AGENTIIK_SERVER/api/v1/runner-pools"
-JOIN_TOKEN=$(curl -fsS --cacert /etc/agentiik/trust/agentiik.pem -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
+JOIN_TOKEN=$(curl -fsS -H "Authorization: Bearer $AGENTIIK_TOKEN" -H 'Content-Type: application/json' \
   --data '{"labels":["zone=lab"]}' "$AGENTIIK_SERVER/api/v1/runner-pools/lab/join-tokens" | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
 echo "$JOIN_TOKEN"
 ```
 
-On the other machine, this repository, the installation's certificate, its address as that machine reaches it, and the token:
+On the other machine, this repository, the installation's certificates, its address as that machine reaches it, and the token:
 
 ```sh
 git clone https://github.com/agentiik/deploy.git && cd deploy/single-host
-scp agentiik.example.com:/etc/agentiik/trust/agentiik.pem .
+scp 'agentiik.example.com:/etc/agentiik/trust/*.pem' .
 AGENTIIK_SERVER=https://agentiik.example.com:8443
 JOIN_TOKEN=agkjoin_...
 ```
+
+The certificates are `agentiik.pem`, which the bus serves and, with no proxy in front, the API, and `proxy.pem` where [the proxy's authority](#behind-a-reverse-proxy) is one the system does not trust. Behind a proxy, `AGENTIIK_SERVER` is its URL, `https://agentiik.example.com`.
 
 <!-- ci: other machine -->
 ```sh
@@ -253,7 +301,7 @@ sudo rm -rf /srv/agentiik /var/lib/agentiik /etc/agentiik /run/agentiik
 | The console | Not part of this stack. | Its own releases. |
 | Object store | On disk under `/srv/agentiik/objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |
-| A certificate from a public authority | `setup` signs its own. Replace `/srv/agentiik/api/tls/server.pem` and `server.key` with yours and run `sudo ./setup` again; clients that already trust its authority then need no `agentiik.pem`. | |
+| A certificate from a public authority | `setup` signs its own, unless [a reverse proxy](#behind-a-reverse-proxy) in front serves the API with its own; the bus keeps `setup`'s. Replace `/srv/agentiik/api/tls/server.pem` and `server.key` with yours and run `sudo ./setup` again; clients that already trust its authority then need no `agentiik.pem`. | |
 
 ## Build from source instead
 

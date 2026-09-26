@@ -55,11 +55,14 @@ case "$AGENTIIK_HOST" in *[!A-Za-z0-9.-]*) die "AGENTIIK_HOST is $AGENTIIK_HOST,
 case "$AGENTIIK_PORT" in *[!0-9]*) die "AGENTIIK_PORT is $AGENTIIK_PORT, and it is a port number" ;; esac
 case "$AGENTIIK_DATA" in /*) ;; *) die "AGENTIIK_DATA is $AGENTIIK_DATA, and it is an absolute path" ;; esac
 case "$AGENTIIK_NAMESPACE" in *[!a-z0-9-]*) die "AGENTIIK_NAMESPACE is $AGENTIIK_NAMESPACE, and a namespace is lowercase words joined by hyphens" ;; esac
+proxy=${AGENTIIK_PUBLIC_URL:-}
+proxy=${proxy%/}
+[ -z "$proxy" ] || [[ "$proxy" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] ||
+  die "AGENTIIK_PUBLIC_URL is $proxy, and it is the https URL of the proxy in front, a name and an optional port with no path, or empty where there is none"
 
 data=$AGENTIIK_DATA
 host=$AGENTIIK_HOST
 port=$AGENTIIK_PORT
-public_url="https://$host:$port"
 
 # The group that owns the Docker socket, which the runner is given and nothing else of the daemon's.
 socket_gid=$(stat -c %g /var/run/docker.sock) || die "there is no Docker socket at /var/run/docker.sock, which the runner drives the daemon through"
@@ -69,7 +72,18 @@ else
   printf '\n# Written by setup: the group that owns /var/run/docker.sock, which the runner is given.\nDOCKER_GID=%s\n' "$socket_gid" >>.env
 fi
 
-say "installing Agentiik $AGENTIIK_VERSION at $public_url, keeping its state in $data"
+# Where the API listens, and the address everything else reaches it at, which every presigned URL is
+# minted on. Behind a proxy, it serves plain HTTP on the loopback alone, the one hop without TLS the
+# documentation allows: from a terminator, on a network nothing else reaches.
+if [ -n "$proxy" ]; then
+  public_url=$proxy
+  printf '# Written by setup from .env: behind the proxy at AGENTIIK_PUBLIC_URL, in plain HTTP on the loopback.\nAGK_PUBLIC_URL=%s\nAGK_LISTEN=127.0.0.1:%s\n' "$public_url" "$port" >listen.env
+  say "installing Agentiik $AGENTIIK_VERSION at $public_url, behind a proxy that forwards to http://127.0.0.1:$port, keeping its state in $data"
+else
+  public_url="https://$host:$port"
+  printf '# Written by setup from .env: HTTPS on every interface, with the certificate setup makes.\nAGK_PUBLIC_URL=%s\nAGK_LISTEN=:%s\nAGK_TLS_CERT_FILE=/agentiik/tls/server.pem\nAGK_TLS_KEY_FILE=/agentiik/tls/server.key\n' "$public_url" "$port" >listen.env
+  say "installing Agentiik $AGENTIIK_VERSION at $public_url, keeping its state in $data"
+fi
 
 # ---------------------------------------------------------------------------------------------
 # Directories, one per service, each owned by whoever reads it and closed to everybody else:
@@ -94,11 +108,13 @@ install -d -m 0755 -o "$agent" -g "$agent" "$api_dir/trust" "$controller_dir/tru
 prepare_runner_host
 
 # ---------------------------------------------------------------------------------------------
-# The certificate. A single host has no terminator in front: the API serves TLS itself, and the bus
-# on the same certificate, which setup makes and signs itself. Clients trust that one certificate,
-# as /etc/agentiik/trust/agentiik.pem, rather than an authority that could sign others. A certificate
+# The certificate. The bus serves TLS with it on 4222, and so does the API where no proxy is in
+# front; setup makes it and signs it itself. Clients trust that one certificate, as
+# /etc/agentiik/trust/agentiik.pem, rather than an authority that could sign others. A certificate
 # from an authority clients already trust replaces api/tls/server.pem and api/tls/server.key, and
 # the trust directories then hold that authority, or nothing where the system's own roots include it.
+# Behind a proxy, the API is reached with the proxy's certificate, and the bus still with this one,
+# since the bus is not proxied: it is NATS, not HTTP.
 
 san="DNS:localhost,IP:127.0.0.1"
 case "$host" in
@@ -215,21 +231,26 @@ docker compose run --rm --no-deps api namespace create "$AGENTIIK_NAMESPACE"
 
 docker compose up --detach --wait --wait-timeout 180 --force-recreate api controller
 
-api() { # method path [body]: one request as the operator, to this host whatever its name resolves to
+# One request as the operator, to the API on this host whatever its name resolves to, and past the
+# proxy where there is one, on the loopback, so that what fails here is the API rather than the proxy.
+if [ -n "$proxy" ]; then
+  local_url="http://127.0.0.1:$port" reach=()
+else
+  local_url=$public_url reach=(--cacert /etc/agentiik/trust/agentiik.pem --resolve "$host:$port:127.0.0.1")
+fi
+api() { # method path [body]
   local body=()
   [ $# -lt 3 ] || body=(-H 'Content-Type: application/json' --data "$3")
   # The token goes through standard input rather than an argument, which anybody on the host can read.
   printf 'header = "Authorization: Bearer %s"\n' "$token" |
-    curl --config - --silent --show-error --fail-with-body \
-      --cacert /etc/agentiik/trust/agentiik.pem --resolve "$host:$port:127.0.0.1" \
-      -X "$1" "${body[@]}" "$public_url$2"
+    curl --config - --silent --show-error --fail-with-body "${reach[@]}" -X "$1" "${body[@]}" "$local_url$2"
 }
 for _ in $(seq 60); do
   api GET /api/v1/runner-pools >/dev/null 2>&1 && break
   sleep 2
 done
-api GET /api/v1/runner-pools >/dev/null || die "the API did not answer at $public_url: docker compose logs api says why"
-say "the API answers at $public_url"
+api GET /api/v1/runner-pools >/dev/null || die "the API did not answer at $local_url: docker compose logs api says why"
+say "the API answers at $local_url"
 
 # ---------------------------------------------------------------------------------------------
 # The runner: a join token from the default pool, where every step that names no runs_on goes, with
@@ -240,8 +261,14 @@ if [ ! -s /etc/agentiik/runner.env ]; then
   issued=$(api POST /api/v1/runner-pools/default/join-tokens '{}')
   join_token=$(printf '%s' "$issued" | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p')
   [ -n "$join_token" ] || die "the API issued no join token: $issued"
-  docker compose run --rm --no-deps --user 0:0 runner join --api "$public_url" --token "$join_token"
+  # Through the proxy where there is one, as a runner on another machine does.
+  docker compose run --rm --no-deps --user 0:0 runner join --api "$public_url" --token "$join_token" ||
+    die "the runner could not join at $public_url$([ -z "$proxy" ] || echo ": the proxy must be serving it, with a certificate the system trusts or one in /etc/agentiik/trust")"
 fi
+
+joined=$(sed -n 's/^AGK_API=//p' /etc/agentiik/runner.env | tr -d '"')
+[ -z "$joined" ] || [ "$joined" = "$public_url" ] ||
+  say "the runner joined at $joined, not $public_url, and keeps reaching the API there: sudo rm /etc/agentiik/runner.env and run setup again to join it at the new address"
 
 docker compose up --detach --wait --wait-timeout 180
 for _ in $(seq 60); do
@@ -251,7 +278,11 @@ done
 api GET /api/v1/runners | grep -Eq '"reported_state" *: *"ready"' || die "the runner has not reported ready: docker compose logs runner says why"
 say "the runner is ready"
 
-say "Agentiik $AGENTIIK_VERSION is running at $public_url. Clients trust /etc/agentiik/trust/agentiik.pem."
+if [ -n "$proxy" ]; then
+  say "Agentiik $AGENTIIK_VERSION is running at $public_url. Runners trust /etc/agentiik/trust/agentiik.pem for the bus, and the proxy's certificate for the API."
+else
+  say "Agentiik $AGENTIIK_VERSION is running at $public_url. Clients trust /etc/agentiik/trust/agentiik.pem."
+fi
 if [ -t 3 ]; then
   say "the operator token follows, shown this once: keep it, since only its hash is written down"
 fi
