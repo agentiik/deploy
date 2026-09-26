@@ -48,7 +48,7 @@ applied 0001_state.sql
 ...
 applied 0031_audit_verified.sql
 agentiik is the role the API and the controller connect as, NOSUPERUSER NOBYPASSRLS
-setup: the namespace demo exists, and the default pool carries zone=local
+created namespace demo
 setup: the API answers at https://localhost:8443
 This host joined pool default as runner 01m3ef2wy45ajc2twvwcspmj44.
 Its key is in /var/lib/agentiik/runner.key and its credential in /etc/agentiik/runner.env, both mode 0600 and owned by account agentiik.
@@ -249,8 +249,7 @@ sudo rm -rf /srv/agentiik /var/lib/agentiik /etc/agentiik /run/agentiik
 | What | Today | When |
 | --- | --- | --- |
 | Users, groups, sign-in | One operator token may do everything. | v0.3.0 brings principals and a bootstrap token. |
-| Creating a namespace | No verb yet: `setup` creates `AGENTIIK_NAMESPACE` with SQL, and another is one line, `docker compose exec -T postgres psql -U postgres -d agentiik -c "insert into namespaces (name) values ('team')"`. | `agentiik-api namespace create`, [agentiik#336](https://github.com/agentiik/agentiik/issues/336), which `setup` will use. |
-| The default pool | Created with no label, and a runner claims at least one, so `setup` gives it the runner's labels, and another machine joins a pool of its own. | A runner with no label joins it, [agentiik#336](https://github.com/agentiik/agentiik/issues/336). |
+| Creating a namespace through the API | `setup` creates `AGENTIIK_NAMESPACE`, and another is `docker compose run --rm --no-deps api namespace create team`, on the installation's host. | v0.3.0, with the access model. |
 | The console | Not part of this stack. | Its own releases. |
 | Object store | On disk under `/srv/agentiik/objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |
