@@ -20,7 +20,9 @@ services:
     network_mode: none # reached through its socket alone, which only init, the API and the controller mount, so it asks no password
     userns_mode: host
     environment: { POSTGRES_DB: agentiik, POSTGRES_HOST_AUTH_METHOD: trust }
-    volumes: [postgres:/var/lib/postgresql/data, socket:/var/run/postgresql]
+    volumes:
+      - "${AGENTIIK_DATA:-./data}/postgres:/var/lib/postgresql/data"
+      - "socket:/var/run/postgresql"
     healthcheck: { test: pg_isready -h 127.0.0.1 -U postgres, interval: 2s }
     restart: unless-stopped
 
@@ -44,20 +46,26 @@ services:
       AGK_MIGRATE_DATABASE_URL: postgres://postgres@/agentiik?host=/run/postgresql
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
     volumes:
-      - api:/init/api
-      - controller:/init/controller
-      - bus:/init/bus
-      - nats:/init/nats
-      - runner:/init/runner
-      - objects:/init/objects
-      - socket:/run/postgresql
+      - "${AGENTIIK_DATA:-./data}/api:/init/api"
+      - "${AGENTIIK_DATA:-./data}/controller:/init/controller"
+      - "${AGENTIIK_DATA:-./data}/bus:/init/bus"
+      - "${AGENTIIK_DATA:-./data}/nats:/init/nats"
+      - "${AGENTIIK_DATA:-./data}/runner:/init/runner"
+      - "${AGENTIIK_DATA:-./data}/objects:/init/objects"
+      - "socket:/run/postgresql"
 
   nats:
-    <<: *agentiik
     image: nats:2-alpine
+    # Not on the host's network, so that nothing it listens on inside, such as its monitoring port,
+    # can collide with a program of the host: only the bus port is published, where every runner
+    # reaches it.
+    ports: ["${AGENTIIK_BUS_PORT:-4222}:4222"]
+    userns_mode: host
+    restart: unless-stopped
     command: ["-c", "/nats/nats.conf"] # written by init: 4222 on every interface, over TLS alone
     depends_on: *after-init
-    volumes: [nats:/nats]
+    volumes:
+      - "${AGENTIIK_DATA:-./data}/nats:/nats"
     healthcheck: { test: wget -qO /dev/null http://127.0.0.1:8222/healthz, interval: 2s }
 
   api:
@@ -67,7 +75,7 @@ services:
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
       AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
-      AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:4222 # the address every runner is handed too, on the certificate
+      AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:${AGENTIIK_BUS_PORT:-4222} # the address every runner is handed too, on the certificate
       AGK_BUS_CREDENTIALS_FILE: /bus/control-plane.creds # the API renews it here, 14 days before its end; the controller reads it
       AGK_BUS_ACCOUNT_SEED_FILE: /agentiik/bus/account.seed
       AGK_OBJECTS_DIR: /objects
@@ -82,7 +90,11 @@ services:
       # the two lines above and the certificate unread.
       AGK_PROXY_URL: ${AGENTIIK_PROXY_URL:-}
       SSL_CERT_DIR: /agentiik/trust # the certificate init made, beside the system's authorities
-    volumes: [api:/agentiik, bus:/bus, objects:/objects, socket:/run/postgresql]
+    volumes:
+      - "${AGENTIIK_DATA:-./data}/api:/agentiik"
+      - "${AGENTIIK_DATA:-./data}/bus:/bus"
+      - "${AGENTIIK_DATA:-./data}/objects:/objects"
+      - "socket:/run/postgresql"
     healthcheck: { test: [CMD, /agentiik-api, health], interval: 2s } # the image has no shell, hence the exec form
 
   controller:
@@ -92,11 +104,15 @@ services:
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
       AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
-      AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:4222
+      AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:${AGENTIIK_BUS_PORT:-4222}
       AGK_BUS_CREDENTIALS_FILE: /bus/control-plane.creds
       AGK_OBJECTS_DIR: /objects
       SSL_CERT_DIR: /agentiik/trust
-    volumes: [controller:/agentiik, "bus:/bus:ro", objects:/objects, socket:/run/postgresql]
+    volumes:
+      - "${AGENTIIK_DATA:-./data}/controller:/agentiik"
+      - "${AGENTIIK_DATA:-./data}/bus:/bus:ro"
+      - "${AGENTIIK_DATA:-./data}/objects:/objects"
+      - "socket:/run/postgresql"
 
   # Started as root, it takes the group of the Docker socket, drops to uid 65532 and serves, joining
   # the pool default with the token init wrote where it has no identity yet, or where AGK_API changed.
@@ -120,8 +136,8 @@ services:
       - { source: ca, target: /etc/ssl/agentiik/ca.pem }
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - runner:/etc/agentiik # init's certificate and join token, and the identity join writes
-      - runner-state:/var/lib/agentiik # the runner's key and credential
+      - "${AGENTIIK_DATA:-./data}/runner:/etc/agentiik" # init's certificate and join token, and the identity join writes
+      - "${AGENTIIK_DATA:-./data}/runner-state:/var/lib/agentiik" # the runner's key and credential
       # The work root, at the same path on both sides, since the daemon resolves the bind sources
       # of every step's container on this host. The one path on the host this file names.
       - /var/lib/agentiik/work:/var/lib/agentiik/work
@@ -138,13 +154,7 @@ configs:
       # AGENTIIK_CA: authorities the runner trusts beside the system's, such as a proxy's own.
       ${AGENTIIK_CA:-}
 
+# PostgreSQL's socket, which is no data to keep: a Docker volume rather than a directory of
+# AGENTIIK_DATA, since some file systems a host shares with Docker cannot hold a socket.
 volumes:
-  postgres:
   socket:
-  api:
-  controller:
-  bus:
-  nats:
-  objects:
-  runner:
-  runner-state:
