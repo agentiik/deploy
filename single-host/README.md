@@ -226,7 +226,7 @@ Another namespace is also `docker compose run --rm --no-deps api namespace creat
 
 ## Upgrade
 
-Set `AGENTIIK_VERSION` in `.env` to the new version, or download the new release's `compose.yaml`, whose default it is, then:
+Download the new release's `compose.yaml` in place of the old one, since a release may change the services as well as their version, and keep `.env`; remove `AGENTIIK_VERSION` from `.env` if it pins the old one. Then:
 
 ```sh
 docker compose up -d --wait
