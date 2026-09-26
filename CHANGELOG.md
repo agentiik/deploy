@@ -6,7 +6,7 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.2.5, 2026-09-26
 
 - An installation of `v0.2.4` is not upgraded in place: its state is in Docker volumes, and `v0.2.5` keeps it in `AGENTIIK_DATA`. Remove it as its README said, then start anew.
 - `single-host/`: NATS is off the host's network and publishes its bus port alone, `AGENTIIK_BUS_PORT`, so a program of the host on 8222 no longer stops it.
