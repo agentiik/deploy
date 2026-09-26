@@ -6,7 +6,7 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.2.4, 2026-09-26
 
 - An installation made by `setup` up to `v0.2.3` is not upgraded in place: its state is in `AGENTIIK_DATA` on the host, and `v0.2.4` keeps it in Docker volumes. Install `v0.2.4` anew, then remove the old one as its README said.
 - `single-host/`: a `bus` volume holds the control plane's bus credential, which the API renews and the controller reads; upgrading replaces `compose.yaml` rather than only `AGENTIIK_VERSION`.
