@@ -194,6 +194,7 @@ steps:
     runs_on: [zone=lab]
     script:
       - echo "where runs on $(hostname)" >&2
+    outputs: [out]
 EOF
 git add agentiik.yaml && git commit -qm "A step for the lab"
 agk push --namespace demo
