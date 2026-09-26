@@ -5,7 +5,9 @@
 #
 #   sudo ./add-runner <server> <join token> <labels>
 #
-# The certificate is ./agentiik.pem, copied from /etc/agentiik/trust on the installation's host. The
+# The certificates are the .pem files here, copied from /etc/agentiik/trust on the installation's
+# host: agentiik.pem, which the bus serves and, where no proxy is in front, the API, and behind a
+# proxy whose certificate the system's own authorities do not vouch for, that proxy's authority. The
 # version is the one .env names, or .env.example where there is no .env. Running it again keeps the
 # identity join wrote and restarts the runner.
 set -euo pipefail
@@ -21,7 +23,7 @@ cd "$here"
 # shellcheck source=runner-host.sh
 . ./runner-host.sh
 
-[ $# -eq 3 ] || die "usage: sudo ./add-runner <server> <join token> <labels>, such as sudo ./add-runner https://agentiik.example.com:8443 agkjoin_... zone=lab"
+[ $# -eq 3 ] || die "usage: sudo ./add-runner <server> <join token> <labels>, such as sudo ./add-runner https://agentiik.example.com:8443 agkjoin_... zone=lab, or the proxy's URL where one is in front"
 server=$1 token=$2 labels=$3
 [ "$(uname -s)" = Linux ] || die "this host runs $(uname -s), and a runner runs on Linux: it hands the Docker daemon paths on this host to bind, which a daemon in a virtual machine cannot see"
 [ "$(id -u)" -eq 0 ] || die "run as root, sudo ./add-runner: it writes /etc/agentiik and /var/lib/agentiik, gives them to uid $agent, and mounts a tmpfs"
@@ -32,7 +34,7 @@ version=$(sed -n 's/^AGENTIIK_VERSION=//p' "$([ -f .env ] && echo .env || echo .
 image=ghcr.io/agentiik/runner:$version
 
 prepare_runner_host
-install -m 0644 agentiik.pem /etc/agentiik/trust/agentiik.pem
+install -m 0644 ./*.pem /etc/agentiik/trust/
 docker image inspect "$image" >/dev/null 2>&1 || docker pull --quiet "$image"
 
 if [ ! -s /etc/agentiik/runner.env ]; then

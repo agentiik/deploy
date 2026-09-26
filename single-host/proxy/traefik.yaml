@@ -1,0 +1,26 @@
+# Traefik in front of the single-host installation: its static configuration, as
+# /etc/traefik/traefik.yaml, with traefik-agentiik.yaml beside it for the route.
+entryPoints:
+  websecure:
+    address: ":443"
+    transport:
+      respondingTimeouts:
+        # Traefik v3 stops reading a request after 60 seconds, which cuts an artifact upload of
+        # up to 5 GiB short: 0 is no limit. The API bounds what it reads on each route.
+        readTimeout: 0
+    http:
+      encodedCharacters:
+        # An artifact's URI is one path segment with its slashes as %2F, which Traefik refuses
+        # by default. It reaches the API undecoded.
+        allowEncodedSlash: true
+
+providers:
+  file:
+    filename: /etc/traefik/traefik-agentiik.yaml
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@example.com
+      storage: /etc/traefik/acme.json
+      tlsChallenge: {}

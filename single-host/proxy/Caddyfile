@@ -1,0 +1,13 @@
+# Caddy in front of the single-host installation. It serves the address AGENTIIK_PUBLIC_URL names,
+# from the environment, with a certificate it obtains and renews: from Let's Encrypt for a public
+# name, from its own authority for an IP address or a name such as agentiik.internal.
+{$AGENTIIK_PUBLIC_URL} {
+	# The API, in plain HTTP on the loopback: AGENTIIK_PORT in .env.
+	reverse_proxy 127.0.0.1:8443 {
+		# Every write passed on at once, so that a step's log stream (server-sent events) is
+		# never held back. Caddy already does it for text/event-stream; this says so.
+		flush_interval -1
+	}
+	# Nothing else to set: Caddy passes the path as sent, %2F included, sets no request body
+	# limit and no response timeout, and the API reads no X-Forwarded-* header.
+}

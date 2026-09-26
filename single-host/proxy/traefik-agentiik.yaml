@@ -1,0 +1,16 @@
+# Traefik's route to the single-host installation, which traefik.yaml reads with its file provider.
+http:
+  routers:
+    agentiik:
+      rule: Host(`agentiik.example.com`) # the name AGENTIIK_PUBLIC_URL names
+      entryPoints: [websecure]
+      service: agentiik
+      tls:
+        certResolver: letsencrypt
+  services:
+    agentiik:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:8443 # the API, in plain HTTP on the loopback: AGENTIIK_PORT in .env
+        # Nothing else to set: Traefik streams server-sent events as they come, passes the body
+        # whole with no size limit, and the API reads no X-Forwarded-* header.
