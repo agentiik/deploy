@@ -144,6 +144,7 @@ metadata:
 outputs:
   greeting:
     from: { step: greet, port: out }
+    retain: 7d
 steps:
   greet:
     image: alpine:3.21
@@ -181,7 +182,7 @@ greet | greet runs on x86_64
 greet | driver: the container exited 0: the output envelopes are published
 ```
 
-The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows. A file it leaves in `/agk/out/files/` becomes an artifact of that output, which `curl` fetches last by its URI, `agk://run/<run>/greet/out/greeting.txt`, percent-encoded as one segment of the path.
+The first line is `agk push` resolving the tag on your own Docker daemon, which says what that daemon gives up. `agk status` says how the run and each step stand, and `agk logs` prints what each step wrote on standard error; what it writes on standard output becomes its output, as [Get started](https://agentiik.github.io/docs/#get-started) shows. A file it leaves in `/agk/out/files/` becomes an artifact of that output, kept for the seven days `retain` says, which `curl` fetches last by its URI, `agk://run/<run>/greet/out/greeting.txt`, percent-encoded as one segment of the path.
 
 ## Add a runner on another machine
 
