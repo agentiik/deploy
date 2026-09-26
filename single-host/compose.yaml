@@ -82,6 +82,7 @@ services:
       AGK_PROXY_URL: ${AGENTIIK_PROXY_URL:-}
       SSL_CERT_DIR: /agentiik/trust # the certificate init made, beside the system's authorities
     volumes: [api:/agentiik, objects:/objects, socket:/run/postgresql]
+    healthcheck: { test: [CMD, /agentiik-api, health], interval: 2s } # the image has no shell, hence the exec form
 
   controller:
     <<: *agentiik
@@ -101,7 +102,7 @@ services:
   runner:
     <<: *agentiik
     image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.2.4}
-    depends_on: { <<: *after-init, api: { condition: service_started } }
+    depends_on: { <<: *after-init, api: { condition: service_healthy } }
     cap_drop: [ALL]
     cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
     environment:
