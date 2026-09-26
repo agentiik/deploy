@@ -46,6 +46,7 @@ services:
     volumes:
       - api:/init/api
       - controller:/init/controller
+      - bus:/init/bus
       - nats:/init/nats
       - runner:/init/runner
       - objects:/init/objects
@@ -67,7 +68,7 @@ services:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
       AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
       AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:4222 # the address every runner is handed too, on the certificate
-      AGK_BUS_CREDENTIALS_FILE: /agentiik/bus/control-plane.creds
+      AGK_BUS_CREDENTIALS_FILE: /bus/control-plane.creds # the API renews it here, 14 days before its end; the controller reads it
       AGK_BUS_ACCOUNT_SEED_FILE: /agentiik/bus/account.seed
       AGK_OBJECTS_DIR: /objects
       AGK_PRESIGN_KEY_FILE: /agentiik/presign-key
@@ -81,7 +82,7 @@ services:
       # the two lines above and the certificate unread.
       AGK_PROXY_URL: ${AGENTIIK_PROXY_URL:-}
       SSL_CERT_DIR: /agentiik/trust # the certificate init made, beside the system's authorities
-    volumes: [api:/agentiik, objects:/objects, socket:/run/postgresql]
+    volumes: [api:/agentiik, bus:/bus, objects:/objects, socket:/run/postgresql]
     healthcheck: { test: [CMD, /agentiik-api, health], interval: 2s } # the image has no shell, hence the exec form
 
   controller:
@@ -92,10 +93,10 @@ services:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
       AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
       AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:4222
-      AGK_BUS_CREDENTIALS_FILE: /agentiik/bus/control-plane.creds
+      AGK_BUS_CREDENTIALS_FILE: /bus/control-plane.creds
       AGK_OBJECTS_DIR: /objects
       SSL_CERT_DIR: /agentiik/trust
-    volumes: [controller:/agentiik, objects:/objects, socket:/run/postgresql]
+    volumes: [controller:/agentiik, "bus:/bus:ro", objects:/objects, socket:/run/postgresql]
 
   # Started as root, it takes the group of the Docker socket, drops to uid 65532 and serves, joining
   # the pool default with the token init wrote where it has no identity yet, or where AGK_API changed.
@@ -142,6 +143,7 @@ volumes:
   socket:
   api:
   controller:
+  bus:
   nats:
   objects:
   runner:
