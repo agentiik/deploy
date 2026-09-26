@@ -293,7 +293,7 @@ The database and `data/`, taken together, since a run restored without its objec
 <!-- ci -->
 ```sh
 docker compose exec -T postgres pg_dump -U postgres -Fc agentiik > agentiik.dump
-sudo tar -cz --exclude=data/postgres data > agentiik-data.tar.gz
+sudo tar -czf agentiik-data.tar.gz --exclude=data/postgres data
 ```
 <!-- ci: check backup -->
 
