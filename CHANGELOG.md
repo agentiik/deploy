@@ -8,6 +8,8 @@ Every repository of the project carries the same version and is tagged at the sa
 
 ## Unreleased
 
+- `proxy/nginx.conf` sets `X-Forwarded-For` from the connection, since the API counts sign-in attempts by its last entry; the Caddy and Traefik comments say they append it.
+- The README states the free space a PostgreSQL major upgrade needs, and that `data/postgres-17` is a way back only before the new release has run.
 - The single-host workflow upgrades the latest release, and `latest` to `dev`, with `compose.yaml` and `.env` alone, and checks that the operator token, an earlier run with its outputs and the runner survive and that a new run succeeds.
 - `single-host/`: PostgreSQL 18, its cluster still directly in `data/postgres`. A `postgres-upgrade` service upgrades the PostgreSQL 17 data of an installation to 18 at its next `docker compose up`, before PostgreSQL starts, and keeps the old cluster as `data/postgres-17`; nothing is asked of the person upgrading, even where v0.2.5's PostgreSQL was killed at its stop.
 - `single-host/README.md`: the backup leaves out a kept cluster as it does the running one.

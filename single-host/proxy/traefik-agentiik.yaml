@@ -13,4 +13,5 @@ http:
         servers:
           - url: http://127.0.0.1:8443 # the API, in plain HTTP on the loopback: AGENTIIK_PORT in .env
         # Nothing else to set: Traefik streams server-sent events as they come, passes the body
-        # whole with no size limit, and the API reads no X-Forwarded-* header.
+        # whole with no size limit, and appends the client's address to X-Forwarded-For, whose
+        # last entry is the address the API counts sign-in attempts by.

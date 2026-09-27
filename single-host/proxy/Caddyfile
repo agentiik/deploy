@@ -9,5 +9,6 @@
 		flush_interval -1
 	}
 	# Nothing else to set: Caddy passes the path as sent, %2F included, sets no request body
-	# limit and no response timeout, and the API reads no X-Forwarded-* header.
+	# limit and no response timeout, and appends the client's address to X-Forwarded-For, whose
+	# last entry is the address the API counts sign-in attempts by.
 }
