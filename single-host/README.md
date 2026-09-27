@@ -12,6 +12,7 @@ Every command below is run, exactly as written here, on a fresh Ubuntu machine b
 | Docker Engine 28 or later, with Compose 2.24 or later | Every component is a container, and so is every step of every workflow. Compose 2.24 reads the inline `configs` and `depends_on.restart` the file uses. |
 | `curl`, `openssl`, `git`, `sudo` | To download the file, make a token and commit a workflow; `sudo` only to back up and remove what the containers wrote as root. |
 | Ports 8443 and 4222 open | The API serves HTTPS on 8443 and the bus listens on 4222, both on every interface: open them to the machines that reach the installation, and nothing else. Behind a proxy, its 443 takes the place of 8443, which then listens on the loopback alone. Where 4222 is taken, `AGENTIIK_BUS_PORT` in `.env` moves the bus. |
+| Free space for a second copy of the database | An upgrade that moves PostgreSQL to a new major version copies its data beside the old cluster, which is kept; without the room it refuses and changes nothing. |
 | Go 1.27, or Homebrew, where you run `agk` | To install the command line. `agk push` also needs a Docker daemon, to resolve image tags to digests. |
 
 ## Start
@@ -214,7 +215,7 @@ Download the new release's `compose.yaml` in place of the old one, since a relea
 docker compose up -d --wait
 ```
 
-`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Where a release moves PostgreSQL to a new major version, as v0.3.0 moves it from 17 to 18, `postgres-upgrade` upgrades `data/postgres` with `pg_upgrade` before PostgreSQL starts, and keeps the previous cluster beside it as `data/postgres-17`, the way back, for you to remove once you no longer need it. Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the operator token, the runs made before and the runner still work.
+`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Where a release moves PostgreSQL to a new major version, as v0.3.0 moves it from 17 to 18, `postgres-upgrade` upgrades `data/postgres` with `pg_upgrade` before PostgreSQL starts, and keeps the previous cluster beside it as `data/postgres-17`. It is a way back only if the new release fails to start: then rename it `data/postgres` and put back the previous `compose.yaml`. Once the new release has run, its purges may have removed files the old cluster names, so the upgrade is one way from then on; remove `data/postgres-17` once you no longer need it. An nginx configuration copied before v0.3.0 needs the `proxy_set_header X-Forwarded-For $remote_addr;` line [`proxy/nginx.conf`](proxy/nginx.conf) now carries. Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the operator token, the runs made before and the runner still work.
 
 An installation of v0.2.4 kept its state in Docker volumes rather than `data/`, and is not upgraded in place: remove it as its README said, then start anew.
 
