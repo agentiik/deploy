@@ -48,6 +48,9 @@ jobs:
           (cd single-host && if docker compose config --quiet 2>"$RUNNER_TEMP/err"; then exit 1; fi; grep 'set AGENTIIK_OPERATOR_TOKEN in .env' "$RUNNER_TEMP/err")
           (cd single-host && AGENTIIK_OPERATOR_TOKEN=$token docker compose config --quiet)
           (cd single-host && AGENTIIK_OPERATOR_TOKEN=$token AGENTIIK_PROXY_URL=https://agentiik.example.com docker compose config --quiet)
+          # postgres-upgrade upgrades to the major version the postgres image runs, named twice in the file.
+          (cd single-host && AGENTIIK_OPERATOR_TOKEN=$token docker compose config --format json |
+            jq -e '(.services.postgres.image | capture("^postgres:(?<major>[0-9]+)-").major) == .services["postgres-upgrade"].command[1]')
           (cd single-host && cp .env.example .env && ! docker compose config --quiet 2>/dev/null)
           (cd single-host && sed -i "s/^AGENTIIK_OPERATOR_TOKEN=\$/AGENTIIK_OPERATOR_TOKEN=$token/" .env && docker compose config --quiet && rm .env)
           (cd runner && ! docker compose config --quiet 2>/dev/null)

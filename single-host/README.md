@@ -80,7 +80,7 @@ Each passes a step's log stream on as it is written, the path undecoded (an arti
 
 ### What runs
 
-`init` runs first at every `docker compose up`, and brings the installation in line with `.env`; the other services wait for it.
+`postgres-upgrade` and `init` run first at every `docker compose up`: the one upgrades PostgreSQL's data where a release moves it to a new major version, the other brings the installation in line with `.env`, and the other services wait for them.
 
 <!-- ci: check data-dir -->
 <!-- ci -->
