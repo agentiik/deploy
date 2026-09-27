@@ -8,6 +8,7 @@ Every repository of the project carries the same version and is tagged at the sa
 
 ## Unreleased
 
+- `runner/.env.example`: an administrator issues the join token.
 - `single-host/README.md`: "The first administrator", created with the bootstrap token by `agk user create alice --admin`, then signed in from a browser and with `agk login`; "Change a setting" gives alice a new namespace rather than replacing the token.
 - The single-host workflow runs the first administrator's commands up to the link and checks it, leaves out the blocks marked `<!-- ci: browser -->`, and replaces the bootstrap token in `.env` itself.
 - `single-host/`: the API is no longer given `AGK_OPERATOR_TOKEN_FILE`, which v0.3.0 does not read, and `.env.example` calls the token in `.env` the bootstrap token.
