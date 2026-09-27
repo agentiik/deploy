@@ -2,7 +2,7 @@
 
 One Linux machine runs the whole installation from one file, [`compose.yaml`](compose.yaml): PostgreSQL, the NATS bus, the API, the controller, one runner, and `init`, which prepares the rest at every start. It is [Profile A](https://agentiik.github.io/docs/#profile-a-a-single-host) of the documentation, for a homelab, a small team, or reproducing an incident. Nothing is redundant, on purpose.
 
-Every command below is run, exactly as written here, on a fresh Ubuntu machine by [the single-host workflow](../.github/workflows/single-host.yml) on every change: as in [Start](#start), [on a server](#on-a-server), and [behind Caddy](#behind-a-reverse-proxy).
+Every command below is run, exactly as written here, on a fresh Ubuntu machine by [the single-host workflow](../.github/workflows/single-host.yml) on every change: as in [Start](#start), [on a server](#on-a-server), and [behind Caddy](#behind-a-reverse-proxy). Signing in is the exception, since it takes a browser.
 
 ## What you need
 
@@ -14,6 +14,7 @@ Every command below is run, exactly as written here, on a fresh Ubuntu machine b
 | Ports 8443 and 4222 open | The API serves HTTPS on 8443 and the bus listens on 4222, both on every interface: open them to the machines that reach the installation, and nothing else. Behind a proxy, its 443 takes the place of 8443, which then listens on the loopback alone. Where 4222 is taken, `AGENTIIK_BUS_PORT` in `.env` moves the bus. |
 | Free space for a second copy of the database | An upgrade that moves PostgreSQL to a new major version copies its data beside the old cluster, which is kept; without the room it refuses and changes nothing. |
 | Go 1.27, or Homebrew, where you run `agk` | To install the command line. `agk push` also needs a Docker daemon, to resolve image tags to digests. |
+| A browser | To register a passkey and sign in with `agk login`, in a browser that trusts the installation's certificate: [The first administrator](#the-first-administrator). |
 
 ## Start
 
@@ -28,7 +29,7 @@ export AGENTIIK_TOKEN="$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
 docker compose up -d --wait
 ```
 
-`.env` holds the operator token, the one credential of a v0.2 installation, which may do everything and which `agk` reads as `AGENTIIK_TOKEN`: `compose.yaml` refuses to start without it. Every other setting has its default in `compose.yaml`, and [`.env.example`](.env.example) lists them all. The state is kept in `data/` beside `compose.yaml`, or where `AGENTIIK_DATA` in `.env` says.
+`.env` holds the bootstrap token, which administers the installation until [the first administrator](#the-first-administrator) has signed in and which `agk` reads as `AGENTIIK_TOKEN`: `compose.yaml` refuses to start without it. Every other setting has its default in `compose.yaml`, and [`.env.example`](.env.example) lists them all. The state is kept in `data/` beside `compose.yaml`, or where `AGENTIIK_DATA` in `.env` says.
 
 ### On a server
 
@@ -135,6 +136,35 @@ export AGENTIIK_SERVER=https://agentiik.example.com
 export CURL_CA_BUNDLE="$PWD/trust/proxy.pem"
 ```
 
+## The first administrator
+
+The token in `.env` is the bootstrap token. It administers the installation and owns every namespace until the first administrator has signed in, and does nothing after, so its one lasting use is to create that administrator, `alice` here. An administrator holds no namespace until a grant gives one, so the token gives `alice` the one `init` made too:
+
+<!-- ci -->
+```sh
+agk user create alice --admin
+agk share demo --user alice --role owner
+```
+<!-- ci: check first-admin -->
+
+```text
+alice is an administrator with no credential yet. Open this link once, before 10:15 UTC, to enrol a passkey, or a password where the installation allows one:
+https://localhost:8443/auth/enrol#agkenrol_...
+the bootstrap token works until alice has signed in; then sign in as alice with agk login
+granted owner on demo to alice: grant 01M3EF3ZQ1V6D2N8KX4T7B9CWA
+```
+
+Open the link, once and within the hour, in a browser that trusts the installation's certificate, since a browser runs no passkey ceremony on a page clicked past a certificate warning. Behind [a proxy](#behind-a-reverse-proxy) whose certificate is from a public authority, any browser does. Otherwise the certificate is in `trust/`. `proxy.pem`, the authority of a proxy with one of its own, goes in the browser's settings as an authority. `agentiik.pem` is one certificate rather than an authority, which the settings of a browser on Linux refuse as one: macOS trusts it as [above](#point-agk-at-it), and Chrome or Chromium on Linux once `certutil -d sql:$HOME/.pki/nssdb -A -t P,, -n agentiik -i trust/agentiik.pem`, from libnss3-tools, has written it in their certificate database, as the same command does for Firefox with its profile's directory. With `AGENTIIK_HOST` left at `localhost`, the browser is on this machine. The page registers a passkey, or sets a password on an installation addressed by an IP address, where no browser runs a passkey ceremony. `agk user create alice --admin` again prints a fresh link, for one that lapsed. Then sign in here, and give `curl` below a token of alice's:
+
+<!-- ci: browser -->
+```sh
+unset AGENTIIK_TOKEN
+agk login
+export AGENTIIK_TOKEN="$(agk token create --label curl)"
+```
+
+`agk login` opens the sign-in page in a browser, or says what to do where this machine has none, and keeps alice's token for `agk`; `agk token create` mints her a second one, for 90 days, which `agk` presents too while `AGENTIIK_TOKEN` is set. From alice's first sign-in the bootstrap token is refused: a secret that administers everything, shared by whoever reads one file, is what users replace. Its line stays in `.env`, which `compose.yaml` requires, and `init` says at every start that it is ignored. A script is given a service account's token ([First run](https://agentiik.github.io/docs/#first-run)).
+
 ## Run a first workflow
 
 A workflow is a git repository with an `agentiik.yaml` at its root. `agk push` registers a commit in a namespace, and `agk run --namespace` starts it there and follows it to its end.
@@ -190,18 +220,15 @@ a file from greet
 
 ## Change a setting
 
-Edit `.env`, then `docker compose up -d`: Compose recreates every service whose settings changed, `init` brings the installation in line with them, and the services that read what it writes restart. A new `AGENTIIK_HOST` gets a new certificate, a new `AGENTIIK_NAMESPACE` is created beside the previous one, a new `AGENTIIK_OPERATOR_TOKEN` replaces the previous one. It is named apart from `AGENTIIK_TOKEN`, which `agk` reads, because Compose prefers a variable of the shell to the same one in `.env`: exported for `agk`, it would hide every change made in `.env`. `docker compose restart` does not read `.env` again, so it applies nothing.
+Edit `.env`, then `docker compose up -d`: Compose recreates every service whose settings changed, `init` brings the installation in line with them, and the services that read what it writes restart. A new `AGENTIIK_HOST` gets a new certificate, a new `AGENTIIK_NAMESPACE` is created beside the previous one, and a new `AGENTIIK_OPERATOR_TOKEN` replaces the bootstrap token until the first administrator has signed in, and is ignored after. It is named apart from `AGENTIIK_TOKEN`, which `agk` reads, because Compose prefers a variable of the shell to the same one in `.env`: exported for `agk`, it would hide every change made in `.env`. `docker compose restart` does not read `.env` again, so it applies nothing.
 
-A second namespace, and a new operator token, which stops the previous one working:
+A second namespace, which `alice` is given as `demo` was:
 
-<!-- ci: check before-change -->
 <!-- ci -->
 ```sh
 echo 'AGENTIIK_NAMESPACE=team' >> .env
-sed -i '/^AGENTIIK_OPERATOR_TOKEN=/d' .env
-echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up -d --wait
-export AGENTIIK_TOKEN="$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
+agk share team --user alice --role owner
 ```
 <!-- ci: check after-change -->
 
@@ -215,7 +242,7 @@ Download the new release's `compose.yaml` in place of the old one, since a relea
 docker compose up -d --wait
 ```
 
-`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Where a release moves PostgreSQL to a new major version, as v0.3.0 moves it from 17 to 18, `postgres-upgrade` upgrades `data/postgres` with `pg_upgrade` before PostgreSQL starts, and keeps the previous cluster beside it as `data/postgres-17`. It is a way back only if the new release fails to start: then rename it `data/postgres` and put back the previous `compose.yaml`. Once the new release has run, its purges may have removed files the old cluster names, so the upgrade is one way from then on; remove `data/postgres-17` once you no longer need it. An nginx configuration copied before v0.3.0 needs the `proxy_set_header X-Forwarded-For $remote_addr;` line [`proxy/nginx.conf`](proxy/nginx.conf) now carries. Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the operator token, the runs made before and the runner still work.
+`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Where a release moves PostgreSQL to a new major version, as v0.3.0 moves it from 17 to 18, `postgres-upgrade` upgrades `data/postgres` with `pg_upgrade` before PostgreSQL starts, and keeps the previous cluster beside it as `data/postgres-17`. It is a way back only if the new release fails to start: then rename it `data/postgres` and put back the previous `compose.yaml`. Once the new release has run, its purges may have removed files the old cluster names, so the upgrade is one way from then on; remove `data/postgres-17` once you no longer need it. An nginx configuration copied before v0.3.0 needs the `proxy_set_header X-Forwarded-For $remote_addr;` line [`proxy/nginx.conf`](proxy/nginx.conf) now carries. Upgrading from v0.2.5, the operator token in `.env` is the bootstrap token, and works as before until the first administrator has signed in: create one as in [The first administrator](#the-first-administrator), and from that sign-in a script that used the token takes a service account's token instead ([First run](https://agentiik.github.io/docs/#first-run)). Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the token in `.env`, the runs made before and the runner still work.
 
 An installation of v0.2.4 kept its state in Docker volumes rather than `data/`, and is not upgraded in place: remove it as its README said, then start anew.
 
@@ -223,7 +250,7 @@ The bus credential of the API and the controller lasts 90 days, and the API warn
 
 ## Add a runner on another machine
 
-Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on 4222, and the API on 8443 or the proxy's 443; nothing connects to it. It joins a pool with a single-use token the operator issues, and takes the steps whose `runs_on` names its labels. On the installation's host, a pool for its label, and a join token, valid an hour:
+Any Linux machine with Docker Engine 28 can run steps for the installation, as long as it reaches `AGENTIIK_HOST` on 4222, and the API on 8443 or the proxy's 443; nothing connects to it. It joins a pool with a single-use token an administrator issues, and takes the steps whose `runs_on` names its labels. On the installation's host, a pool for its label, and a join token, valid an hour:
 
 <!-- ci: direct proxy -->
 ```sh
@@ -318,7 +345,6 @@ Behind Caddy, `docker rm --force caddy && docker volume rm caddy-data` too.
 
 | What | Today | When |
 | --- | --- | --- |
-| Users, groups, sign-in | One operator token may do everything. | v0.3.0 brings principals and a bootstrap token. |
 | Creating a namespace through the API | `AGENTIIK_NAMESPACE`, or `docker compose run --rm --no-deps api namespace create NAME`, on the installation's host. | v0.3.0, with the access model. |
 | The console | Not part of this stack. | Its own releases. |
 | Object store | On disk in `data/objects`, not MinIO. | v0.9.0 |
