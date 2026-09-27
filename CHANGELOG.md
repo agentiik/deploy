@@ -9,6 +9,8 @@ Every repository of the project carries the same version and is tagged at the sa
 ## Unreleased
 
 - The single-host workflow upgrades the latest release, and `latest` to `dev`, with `compose.yaml` and `.env` alone, and checks that the operator token, an earlier run with its outputs and the runner survive and that a new run succeeds.
+- `single-host/`: PostgreSQL 18, its cluster still directly in `data/postgres`. A `postgres-upgrade` service upgrades the PostgreSQL 17 data of an installation at its next `docker compose up`, before PostgreSQL starts, and keeps the old cluster as `data/postgres-17`; nothing is asked of the person upgrading.
+- `single-host/README.md`: the backup leaves out a kept cluster as it does the running one.
 
 ## v0.2.5, 2026-09-26
 

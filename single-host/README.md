@@ -89,13 +89,14 @@ docker compose ps --all
 ```
 
 ```text
-NAME                    IMAGE                                COMMAND                  SERVICE      STATUS
-agentiik-api-1          ghcr.io/agentiik/api:v0.2.5          "/agentiik-api serve"    api          Up (healthy)
-agentiik-controller-1   ghcr.io/agentiik/controller:v0.2.5   "/agentiik-controller"   controller   Up
-agentiik-init-1         ghcr.io/agentiik/api:v0.2.5          "/agentiik-api init"     init         Exited (0)
-agentiik-nats-1         nats:2-alpine                        "docker-entrypoint.s…"   nats         Up (healthy)
-agentiik-postgres-1     postgres:17-alpine                   "docker-entrypoint.s…"   postgres     Up (healthy)
-agentiik-runner-1       ghcr.io/agentiik/runner:v0.2.5       "/usr/local/bin/agk-…"   runner       Up
+NAME                          IMAGE                                      COMMAND                  SERVICE            STATUS
+agentiik-api-1                ghcr.io/agentiik/api:v0.2.5                "/agentiik-api serve"    api                Up (healthy)
+agentiik-controller-1         ghcr.io/agentiik/controller:v0.2.5         "/agentiik-controller"   controller         Up
+agentiik-init-1               ghcr.io/agentiik/api:v0.2.5                "/agentiik-api init"     init               Exited (0)
+agentiik-nats-1               nats:2-alpine                              "docker-entrypoint.s…"   nats               Up (healthy)
+agentiik-postgres-1           postgres:18-alpine                         "docker-entrypoint.s…"   postgres           Up (healthy)
+agentiik-postgres-upgrade-1   ghcr.io/agentiik/postgres-upgrade:v0.3.0   "/usr/local/bin/post…"   postgres-upgrade   Exited (0)
+agentiik-runner-1             ghcr.io/agentiik/runner:v0.2.5             "/usr/local/bin/agk-…"   runner             Up
 ```
 
 Everything the installation keeps is in `data/`, one directory per service, and the one other path it uses on the host is `/var/lib/agentiik/work`, where the runner lays out each step's files for the daemon to bind.
@@ -213,7 +214,7 @@ Download the new release's `compose.yaml` in place of the old one, since a relea
 docker compose up -d --wait
 ```
 
-`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the operator token, the runs made before and the runner still work.
+`init` migrates the database before the API and the controller start again on the new images. `agk` is upgraded the way it was installed. Where a release moves PostgreSQL to a new major version, as v0.3.0 moves it from 17 to 18, `postgres-upgrade` upgrades `data/postgres` with `pg_upgrade` before PostgreSQL starts, and keeps the previous cluster beside it as `data/postgres-17`, the way back, for you to remove once you no longer need it. Nothing else is asked of you: [the single-host workflow](../.github/workflows/single-host.yml) upgrades the latest release, and `latest` to `dev`, this way on every change, and checks that the operator token, the runs made before and the runner still work.
 
 An installation of v0.2.4 kept its state in Docker volumes rather than `data/`, and is not upgraded in place: remove it as its README said, then start anew.
 
@@ -293,7 +294,7 @@ The database and `data/`, taken together, since a run restored without its objec
 <!-- ci -->
 ```sh
 docker compose exec -T postgres pg_dump -U postgres -Fc agentiik > agentiik.dump
-sudo tar -czf agentiik-data.tar.gz --exclude=data/postgres data
+sudo tar -czf agentiik-data.tar.gz --exclude='data/postgres*' data
 ```
 <!-- ci: check backup -->
 

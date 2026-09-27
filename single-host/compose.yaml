@@ -16,15 +16,33 @@ x-after-init: &after-init
   init: { condition: service_completed_successfully, restart: true }
 
 services:
+  # Runs at every docker compose up, before PostgreSQL: where data/postgres was written by an older
+  # major version than the one below, it upgrades it with pg_upgrade and keeps the old cluster beside
+  # it, as postgres-17 from 17, the way back; anything else it leaves as it is. Its log says what it did.
+  postgres-upgrade:
+    image: ghcr.io/agentiik/postgres-upgrade:${AGENTIIK_VERSION:-v0.3.0}
+    network_mode: none
+    userns_mode: host # the cluster belongs to uid 70, PostgreSQL's account, which a daemon that remaps user namespaces would map elsewhere
+    restart: "no"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID] # to rename beside the cluster as root, and run PostgreSQL as 70
+    volumes:
+      - "${AGENTIIK_DATA:-./data}:/data" # the directory holding the cluster, since the old one is kept beside it
+
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     network_mode: none # reached through its socket alone, which only init, the API and the controller mount, so it asks no password
     userns_mode: host
-    environment: { POSTGRES_DB: agentiik, POSTGRES_HOST_AUTH_METHOD: trust }
+    # From 18 the image keeps its cluster in 18/docker below a volume at /var/lib/postgresql. PGDATA
+    # set to that volume keeps the cluster directly in data/postgres, where v0.2.5 left it and where
+    # every later major version finds it, and the mount covering the volume leaves Docker none to make.
+    environment: { POSTGRES_DB: agentiik, POSTGRES_HOST_AUTH_METHOD: trust, PGDATA: /var/lib/postgresql }
     volumes:
-      - "${AGENTIIK_DATA:-./data}/postgres:/var/lib/postgresql/data"
+      - "${AGENTIIK_DATA:-./data}/postgres:/var/lib/postgresql"
       - "socket:/var/run/postgresql"
     healthcheck: { test: pg_isready -h 127.0.0.1 -U postgres, interval: 2s }
+    depends_on: { postgres-upgrade: { condition: service_completed_successfully } }
+    stop_grace_period: 1m # a shutdown cut short is a crash, from which postgres-upgrade will not start the next upgrade
     restart: unless-stopped
 
   # Runs at every docker compose up, and brings the installation in line with the settings: the
