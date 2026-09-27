@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # Sourced by the README's script after "The first administrator", which created alice with the
-# bootstrap token and gave her the namespace demo. The test has no browser to open the link in and
-# register a passkey, nor to run agk login, so it checks what leads there, and that the bootstrap
-# token goes on working until alice has signed in, since the rest of the README runs with it here.
+# bootstrap token, which gave her the namespace demo in the same act. The test has no browser to
+# open the link in and register a passkey, nor to run agk login, so it checks what leads there, and
+# that the bootstrap token goes on working until alice has signed in, since the rest of the README
+# runs with it here.
 
 user=$(agk user show alice -o json) || exit
 if ! jq -e '.admin and (has("last_sign_in_at") | not)' <<<"$user" >/dev/null; then
@@ -12,7 +13,7 @@ fi
 
 grants=$(agk grants demo -o json) || exit
 if ! jq -e 'any(.grants[]; .principal == "alice" and .role == "owner")' <<<"$grants" >/dev/null; then
-  echo "alice holds no owner grant on demo after agk share demo --user alice --role owner: $grants" >&2
+  echo "alice holds no owner grant on demo after the bootstrap token created her: $grants" >&2
   exit 1
 fi
 

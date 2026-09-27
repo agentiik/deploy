@@ -138,12 +138,11 @@ export CURL_CA_BUNDLE="$PWD/trust/proxy.pem"
 
 ## The first administrator
 
-The token in `.env` is the bootstrap token. It administers the installation and owns every namespace until the first administrator has signed in, and does nothing after, so its one lasting use is to create that administrator, `alice` here. An administrator holds no namespace until a grant gives one, so the token gives `alice` the one `init` made too:
+The token in `.env` is the bootstrap token. It administers the installation and owns every namespace until the first administrator has signed in, and does nothing after, so its one lasting use is to create that administrator, `alice` here, who is given in the same act the namespaces the token owned, `demo` among them:
 
 <!-- ci -->
 ```sh
 agk user create alice --admin
-agk share demo --user alice --role owner
 ```
 <!-- ci: check first-admin -->
 
@@ -151,7 +150,6 @@ agk share demo --user alice --role owner
 alice is an administrator with no credential yet. Open this link once, before 10:15 UTC, to enrol a passkey, or a password where the installation allows one:
 https://localhost:8443/auth/enrol#agkenrol_...
 the bootstrap token works until alice has signed in; then sign in as alice with agk login
-granted owner on demo to alice: grant 01M3EF3ZQ1V6D2N8KX4T7B9CWA
 ```
 
 Open the link, once and within the hour, in a browser that trusts the installation's certificate, since a browser runs no passkey ceremony on a page clicked past a certificate warning. Behind [a proxy](#behind-a-reverse-proxy) whose certificate is from a public authority, any browser does. Otherwise the certificate is in `trust/`. `proxy.pem`, the authority of a proxy with one of its own, goes in the browser's settings as an authority. `agentiik.pem` is one certificate rather than an authority, which the settings of a browser on Linux refuse as one: macOS trusts it as [above](#point-agk-at-it), and Chrome or Chromium on Linux once `certutil -d sql:$HOME/.pki/nssdb -A -t P,, -n agentiik -i trust/agentiik.pem`, from libnss3-tools, has written it in their certificate database, as the same command does for Firefox with its profile's directory. With `AGENTIIK_HOST` left at `localhost`, the browser is on this machine. The page registers a passkey, or sets a password on an installation addressed by an IP address, where no browser runs a passkey ceremony. `agk user create alice --admin` again prints a fresh link, for one that lapsed. Then sign in here, and give `curl` below a token of alice's:
@@ -222,7 +220,7 @@ a file from greet
 
 Edit `.env`, then `docker compose up -d`: Compose recreates every service whose settings changed, `init` brings the installation in line with them, and the services that read what it writes restart. A new `AGENTIIK_HOST` gets a new certificate, a new `AGENTIIK_NAMESPACE` is created beside the previous one, and a new `AGENTIIK_OPERATOR_TOKEN` replaces the bootstrap token until the first administrator has signed in, and is ignored after. It is named apart from `AGENTIIK_TOKEN`, which `agk` reads, because Compose prefers a variable of the shell to the same one in `.env`: exported for `agk`, it would hide every change made in `.env`. `docker compose restart` does not read `.env` again, so it applies nothing.
 
-A second namespace, which `alice` is given as `demo` was:
+A namespace `init` makes later has no owner, and `alice`, an administrator, gives it to herself:
 
 <!-- ci -->
 ```sh
