@@ -160,8 +160,9 @@ jobs:
           # The README downloads each file from its release tag; the test reads them from this
           # checkout instead, which is what that tag will hold.
           sed -i "s|https://raw\.githubusercontent\.com/agentiik/deploy/[^/]*/|file://$GITHUB_WORKSPACE/|g" "$RUNNER_TEMP/readme.sh"
+          # With the images of main, agk from main, whichever release the README names.
           if [ -n "${UNPUBLISHED:-}" ]; then
-            sed -i "s|cmd/agk@$UNPUBLISHED|cmd/agk@main|" "$RUNNER_TEMP/readme.sh"
+            sed -i "s|cmd/agk@v[0-9][0-9.]*|cmd/agk@main|" "$RUNNER_TEMP/readme.sh"
           fi
           # The name a user gives the installation, here the address this machine and the other one reach.
           sed -i "s|agentiik\.example\.com|$HOST_IP|g" "$RUNNER_TEMP/readme.sh"
@@ -182,7 +183,7 @@ jobs:
           docker exec machine2 docker compose -p agentiik-runner logs --no-color --tail 200 || true
           docker logs caddy || true
 
-  # Upgrading a deployment is replacing compose.yaml and editing .env, then docker compose pull and up: nothing else, no file moved, no volume migrated, no command run by hand. The job installs a deployment as a person did, runs a two-step workflow on it, upgrades it that way to this checkout's compose.yaml, and checks that the operator token is still accepted, the earlier run still reads as it did with its outputs and its artifact, a runner is ready, and the same workflow runs again. release starts from the latest release of this repository, as its README installed it; latest-to-dev from main's compose.yaml following latest, to this one following dev. A release whose layout this compose.yaml cannot start on fails the job, which is what it is for.
+  # Upgrading a deployment is replacing compose.yaml and editing .env, then docker compose pull and up: nothing else, no file moved, no volume migrated, no command run by hand. The job installs a deployment as a person did, runs a two-step workflow on it, upgrades it that way to this checkout's compose.yaml, and checks that the operator token is still accepted, the earlier run still reads as it did with its outputs and its artifact, a runner is ready, and the same workflow runs again. release starts from the latest release of this repository, as its README installed it; latest-to-dev from that release's compose.yaml following latest, to this one following dev, since latest is what that compose.yaml was released with. Where the upgrade moves PostgreSQL to a new major version, the job checks that it runs it and that the previous cluster is kept beside it. A release whose layout this compose.yaml cannot start on fails the job, which is what it is for.
   upgrade:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -215,11 +216,11 @@ jobs:
         run: |
           . .github/single-host/published.sh
           to=$(default_version single-host/compose.yaml)
+          from=$(git ls-remote --tags --refs https://github.com/agentiik/deploy.git | sed 's|.*refs/tags/||' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)
+          if [ -z "$from" ]; then echo "agentiik/deploy has no release tag vX.Y.Z to upgrade from" >&2; exit 1; fi
+          curl -fsSL -o "$RUNNER_TEMP/from-compose.yaml" "https://raw.githubusercontent.com/agentiik/deploy/$from/single-host/compose.yaml"
           case $VARIANT in
           release)
-            from=$(git ls-remote --tags --refs https://github.com/agentiik/deploy.git | sed 's|.*refs/tags/||' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)
-            if [ -z "$from" ]; then echo "agentiik/deploy has no release tag vX.Y.Z to upgrade from" >&2; exit 1; fi
-            curl -fsSL -o "$RUNNER_TEMP/from-compose.yaml" "https://raw.githubusercontent.com/agentiik/deploy/$from/single-host/compose.yaml"
             from_images=$(default_version "$RUNNER_TEMP/from-compose.yaml")
             {
               echo "FROM_LABEL=release $from, running $from_images"
@@ -237,10 +238,9 @@ jobs:
             fi
             ;;
           latest-to-dev)
-            curl -fsSL -o "$RUNNER_TEMP/from-compose.yaml" https://raw.githubusercontent.com/agentiik/deploy/main/single-host/compose.yaml
-            echo "Upgrading main's compose.yaml following latest to this checkout following dev"
+            echo "Upgrading $from's compose.yaml following latest to this checkout following dev"
             {
-              echo "FROM_LABEL=main's compose.yaml following latest"
+              echo "FROM_LABEL=$from's compose.yaml following latest"
               echo "FROM_IMAGES=latest"
               echo "FROM_AGK=latest"
               echo "FROM_ENV_VERSION=latest"
@@ -268,6 +268,7 @@ jobs:
           if [ -n "$FROM_ENV_VERSION" ]; then echo "AGENTIIK_VERSION=$FROM_ENV_VERSION" >> .env; fi
           docker compose up -d --wait
           images_are "$FROM_IMAGES"
+          sudo cat data/postgres/PG_VERSION > "$state/postgres-before"
           go install "github.com/agentiik/agentiik/cmd/agk@$FROM_AGK"
           mkdir -p trust
           docker compose cp api:/agentiik/trust/agentiik.pem trust/
@@ -367,6 +368,26 @@ jobs:
               echo "Runner $runner is ready, joined anew since the upgrade, at $version"
             fi
           done <<< "$ready"
+
+          # PostgreSQL on the major version this compose.yaml runs, and where the upgrade moved it there, the previous cluster kept beside it, the way back.
+          want=$(sed -n 's/^ *image: postgres:\([0-9]*\)-alpine$/\1/p' compose.yaml)
+          before=$(cat "$state/postgres-before")
+          now=$(sudo cat data/postgres/PG_VERSION)
+          if [ "$now" != "$want" ]; then fail "data/postgres holds a cluster of PostgreSQL $now after the upgrade, where compose.yaml runs $want"; fi
+          server=$(docker compose exec -T postgres psql -XAt -U postgres -c 'show server_version_num') || fail "PostgreSQL could not be asked its version after the upgrade"
+          if [ "$((server / 10000))" != "$want" ]; then fail "PostgreSQL answers as $server after the upgrade, where compose.yaml runs $want"; fi
+          upgrader=$(docker compose ps --all --format '{{.Image}} {{.State}} {{.ExitCode}}' postgres-upgrade)
+          if [ "$upgrader" != "ghcr.io/agentiik/postgres-upgrade:$TO_IMAGES exited 0" ]; then fail "postgres-upgrade is $upgrader, where ghcr.io/agentiik/postgres-upgrade:$TO_IMAGES exited 0 was expected"; fi
+          if [ "$before" != "$want" ]; then
+            if [ "$(sudo cat "data/postgres-$before/PG_VERSION" 2>/dev/null)" != "$before" ]; then
+              fail "the PostgreSQL $before cluster is not kept as data/postgres-$before after the upgrade to $want"
+            fi
+            echo "PostgreSQL $before was upgraded to $want, and its cluster is kept as data/postgres-$before"
+          else
+            kept=$(sudo find data -maxdepth 1 -name 'postgres-*')
+            if [ -n "$kept" ]; then fail "PostgreSQL stayed on $want, and yet $kept is beside data/postgres"; fi
+            echo "PostgreSQL stayed on $want"
+          fi
 
           again=$(run_workflow after "after the upgrade")
           if [ -z "$again" ]; then fail "agk run printed no run identifier after the upgrade"; fi
