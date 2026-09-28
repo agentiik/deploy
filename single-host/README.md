@@ -244,7 +244,7 @@ docker compose up -d --wait
 
 An installation of v0.2.4 kept its state in Docker volumes rather than `data/`, and is not upgraded in place: remove it as its README said, then start anew.
 
-The bus credential of the API and the controller lasts 90 days, and the API warns from 14 days before its end. `init` renews it at any `docker compose up` in that time; `docker compose up -d --force-recreate` also restarts the API and the controller on it.
+The bus credential of the API and the controller lasts 90 days. The API renews it itself from 14 days before its end, and both take the new one with no restart; it warns daily only where it cannot, and `init` renews it too at any `docker compose up` in that time.
 
 ## Add a runner on another machine
 
