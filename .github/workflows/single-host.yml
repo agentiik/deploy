@@ -1,10 +1,13 @@
-# The single-host installation, installed as its README says on a fresh Ubuntu machine, a first
-# workflow run on it, a setting changed, a runner added on a second machine, then the installation
-# backed up and removed. The commands are the README's own: every fenced block that follows a
-# <!-- ci --> line, run in order in one shell, so the guide and the test cannot drift apart. It runs
-# three ways: as the README's Start (none), on a server (direct), and behind Caddy (proxy). A block marked
-# <!-- ci: MODE ... --> runs in the modes it names, one marked <!-- ci: other machine --> runs on the
-# second machine, and <!-- ci: check NAME --> sources .github/single-host/NAME.sh at that point.
+# The single-host installation, installed as its README says on a fresh Ubuntu machine, its first
+# administrator created, a first workflow run on it, a setting changed, a runner added on a second
+# machine, then the installation backed up and removed. The commands are the README's own: every
+# fenced block that follows a <!-- ci --> line, run in order in one shell, so the guide and the test
+# cannot drift apart. It runs three ways: as the README's Start (none), on a server (direct), and
+# behind Caddy (proxy). A block marked <!-- ci: MODE ... --> runs in the modes it names, one marked
+# <!-- ci: other machine --> runs on the second machine, and <!-- ci: check NAME --> sources
+# .github/single-host/NAME.sh at that point. One marked <!-- ci: browser --> runs nowhere: it signs
+# the first administrator in, after a browser has registered their passkey, which the test cannot
+# do, so the bootstrap token never ends here and the rest of the README runs with it.
 name: single-host
 
 on:
@@ -139,6 +142,7 @@ jobs:
           awk -v mode="$MODE" '
             /^<!-- ci -->$/ { take = 1; next }
             /^<!-- ci: other machine -->$/ { take = (mode != "none"); other = 1; next }
+            /^<!-- ci: browser -->$/ { take = 0; next }
             /^<!-- ci: check [a-z-]+ -->$/ {
               print ". \"$GITHUB_WORKSPACE/.github/single-host/" $4 ".sh\""
               next
