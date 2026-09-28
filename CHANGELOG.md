@@ -6,15 +6,17 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.3.0, 2026-09-28
 
+- `single-host/` and `runner/` install `v0.3.0`: the images `compose.yaml` names by default, `.env.example`, and the README's downloads, `docker compose ps` and `go install`.
+- `single-host/README.md`: "What v0.3 does not do yet" leaves out creating a namespace through the API, which `agk namespace create NAME --owner LOGIN` does, and Upgrade says the API renews the bus credential itself.
 - `runner/.env.example`: an administrator issues the join token.
 - `single-host/README.md`: "The first administrator", created with the bootstrap token by `agk user create alice --admin`, then signed in from a browser and with `agk login`; "Change a setting" gives alice a new namespace rather than replacing the token.
 - The single-host workflow runs the first administrator's commands up to the link and checks it, leaves out the blocks marked `<!-- ci: browser -->`, and replaces the bootstrap token in `.env` itself.
 - `single-host/`: the API is no longer given `AGK_OPERATOR_TOKEN_FILE`, which v0.3.0 does not read, and `.env.example` calls the token in `.env` the bootstrap token.
 - `proxy/nginx.conf` sets `X-Forwarded-For` from the connection, since the API counts sign-in attempts by its last entry; the Caddy and Traefik comments say they append it.
 - The README states the free space a PostgreSQL major upgrade needs, and that `data/postgres-17` is a way back only before the new release has run.
-- The single-host workflow upgrades the latest release, and `latest` to `dev`, with `compose.yaml` and `.env` alone, and checks that the operator token, an earlier run with its outputs and the runner survive and that a new run succeeds.
+- The single-host workflow upgrades the latest release, and `latest` to `dev`, with `compose.yaml` and `.env` alone, and checks that the token in `.env`, an earlier run with its outputs and the runner survive and that a new run succeeds.
 - `single-host/`: PostgreSQL 18, its cluster still directly in `data/postgres`. A `postgres-upgrade` service upgrades the PostgreSQL 17 data of an installation to 18 at its next `docker compose up`, before PostgreSQL starts, and keeps the old cluster as `data/postgres-17`; nothing is asked of the person upgrading, even where v0.2.5's PostgreSQL was killed at its stop.
 - `single-host/README.md`: the backup leaves out a kept cluster as it does the running one.
 - The single-host workflow checks that `postgres-upgrade` is given the major version the postgres image runs, that a new installation starts on PostgreSQL 18 and that an upgrade runs 18 with the 17 cluster kept, upgrades `latest` to `dev` from the latest release's `compose.yaml`, and takes the highest version `compose.yaml` names by default as the one it runs.
