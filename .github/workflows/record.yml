@@ -1,0 +1,131 @@
+# The recording of agk against a real installation that the site's home page plays: the single-host installation stood up as its README's Start has it, then, in a workflow repository, agk push, agk run following the run to its end, agk status and agk logs, each typed as a person does after Get started. It runs here because an installation needs Linux, whose runner hands the Docker daemon paths on the host to bind, which Docker Desktop cannot see. The installation, the credential and the repository are made off camera, asciinema records .github/record/session.sh, and the cast with its poster is the artifact agk-server-run, which the site takes as it is. It runs on a pull request that changes it, so that the pull request carries its own recording, and by hand.
+name: record
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/record.yml
+      - .github/record/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: record-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agk-server-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      # 100 columns as the site's other casts, and rows for the whole workflow file under the prompt that printed it.
+      RECORD_WINDOW: 100x38
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Lint
+        run: |
+          shellcheck .github/record/*.sh
+          python3 -m py_compile .github/record/cast.py
+
+      # asciinema 3, which recorded the site's other casts, as the static binary its release publishes for this machine, checked against the digest the release gives it.
+      - name: Install asciinema
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/asciinema" https://github.com/asciinema/asciinema/releases/download/v3.2.1/asciinema-x86_64-unknown-linux-musl
+          echo "bec9781bc8f297a9d3d74ff60205599507f2abba1183578b8b2f22be4c999214  $RUNNER_TEMP/asciinema" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/asciinema" /usr/local/bin/asciinema
+          asciinema --version
+
+      - name: Git identity
+        run: |
+          git config --global user.name "Recording"
+          git config --global user.email "record@agentiik.invalid"
+
+      # As the single-host workflow chooses: the release compose.yaml names by default where it is published, and otherwise the images of main, tagged dev, with agk from main.
+      - name: Choose what to install
+        run: |
+          . .github/single-host/published.sh
+          version=$(default_version single-host/compose.yaml)
+          if published "$version"; then
+            echo "Recording $version as published"
+            echo "AGK_AT=$version" >> "$GITHUB_ENV"
+          else
+            echo "$version is not published yet: recording the dev images of main"
+            echo "AGENTIIK_VERSION=dev" >> "$GITHUB_ENV"
+            echo "AGK_AT=main" >> "$GITHUB_ENV"
+          fi
+
+      # The README's Start and "Point agk at it", with this checkout's compose.yaml in place of the release's download, which is what its tag holds. The session presents the bootstrap token in .env, as the README's own commands do: a service account's token would read better, but the bootstrap token mints none, and minting one takes an administrator signed in from a browser, which a job has not got.
+      - name: Start the installation
+        run: |
+          mkdir -p ~/agentiik && cd ~/agentiik
+          cp "$GITHUB_WORKSPACE/single-host/compose.yaml" .
+          echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" > .env
+          echo "::add-mask::$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
+          docker compose up -d --wait
+          go install "github.com/agentiik/agentiik/cmd/agk@$AGK_AT"
+          mkdir -p trust
+          docker compose cp api:/agentiik/trust/agentiik.pem trust/
+          {
+            echo "AGENTIIK_SERVER=https://localhost:8443"
+            echo "SSL_CERT_DIR=$HOME/agentiik/trust"
+          } >> "$GITHUB_ENV"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # The repository the session is typed in, committed, and its images on the host, where agk push resolves them and the runner finds them: the first pull is not what the recording shows. The same workflow runs once first under another name, so that the runner has joined and run a task before the camera starts, and the durations the session prints are those of a second run.
+      - name: Prepare the workflow repository
+        run: |
+          AGENTIIK_TOKEN=$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' ~/agentiik/.env) && export AGENTIIK_TOKEN
+          sed -n 's/^ *image: //p' .github/record/pi/agentiik.yaml | sort -u | while read -r image; do docker pull -q "$image"; done
+          mkdir -p "$RUNNER_TEMP/warm-up" && cd "$RUNNER_TEMP/warm-up" && git init -q
+          sed 's/^metadata: { name: pi,/metadata: { name: warm-up,/' "$GITHUB_WORKSPACE/.github/record/pi/agentiik.yaml" > agentiik.yaml
+          if ! grep -q '^metadata: { name: warm-up,' agentiik.yaml; then
+            echo ".github/record/pi/agentiik.yaml has no line 'metadata: { name: pi, ...', which the warm-up renames" >&2
+            exit 1
+          fi
+          git add agentiik.yaml && git commit -qm "Warm the runner up"
+          agk push --namespace demo
+          agk run --namespace demo
+          cp -r "$GITHUB_WORKSPACE/.github/record/pi" "$RUNNER_TEMP/pi"
+          cd "$RUNNER_TEMP/pi" && git init -q
+          git add agentiik.yaml && git commit -qm "Estimate pi with four players"
+
+      - name: Record the session
+        run: |
+          AGENTIIK_TOKEN=$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' ~/agentiik/.env) && export AGENTIIK_TOKEN
+          cd "$RUNNER_TEMP/pi"
+          RUN_LOG=$RUNNER_TEMP/run.log asciinema rec --headless --quiet --return --window-size "$RECORD_WINDOW" \
+            -f asciicast-v2 --idle-time-limit 2 --title "agk run --namespace: demo/pi" \
+            -c "bash $GITHUB_WORKSPACE/.github/record/session.sh" "$RUNNER_TEMP/raw.cast"
+          asciinema convert -f txt "$RUNNER_TEMP/raw.cast" -
+
+      # The cast as the site keeps its others, refused where it shows the token, a path of this machine or a host other than localhost, and its poster, the final screen from its first prompt, as text and as the home page writes it.
+      - name: Check the cast and write its poster
+        run: |
+          AGENTIIK_TOKEN=$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' ~/agentiik/.env) && export AGENTIIK_TOKEN
+          python3 .github/record/cast.py --window "$RECORD_WINDOW" --prompt pi "$RUNNER_TEMP/raw.cast" "$RUNNER_TEMP/agk-server-run"
+          cat "$RUNNER_TEMP/agk-server-run/agk-server-run.poster.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agk-server-run
+          path: ${{ runner.temp }}/agk-server-run/
+          if-no-files-found: error
+
+      - name: Logs of what failed
+        if: failure()
+        run: |
+          cd ~/agentiik || exit 0
+          docker compose ps --all || true
+          docker compose logs --no-color --tail 200 || true
