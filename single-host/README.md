@@ -230,7 +230,7 @@ agk share team --user alice --role owner
 ```
 <!-- ci: check after-change -->
 
-Another namespace is also `docker compose run --rm --no-deps api namespace create NAME`, which leaves `.env` as it is.
+Another namespace is also `agk namespace create NAME --owner LOGIN`, by an administrator, or `docker compose run --rm --no-deps api namespace create NAME`, which makes one with no owner and leaves `.env` as it is.
 
 ## Upgrade
 
@@ -339,11 +339,10 @@ sudo rm -rf data /var/lib/agentiik/work
 
 Behind Caddy, `docker rm --force caddy && docker volume rm caddy-data` too.
 
-## What v0.2 does not do yet
+## What v0.3 does not do yet
 
 | What | Today | When |
 | --- | --- | --- |
-| Creating a namespace through the API | `AGENTIIK_NAMESPACE`, or `docker compose run --rm --no-deps api namespace create NAME`, on the installation's host. | v0.3.0, with the access model. |
 | The console | Not part of this stack. | Its own releases. |
 | Object store | On disk in `data/objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |
