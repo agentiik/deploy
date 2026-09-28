@@ -24,7 +24,7 @@ jobs:
         shell: bash
     env:
       # 100 columns as the site's other casts, and rows for the whole workflow file under the prompt that printed it.
-      RECORD_WINDOW: 100x38
+      RECORD_WINDOW: 100x39
 
     steps:
       - uses: actions/checkout@v4

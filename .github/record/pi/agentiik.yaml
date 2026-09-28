@@ -19,10 +19,11 @@ steps:
     params: { player: "${{ item.data.player }}", darts: "${{ workflow.inputs.darts }}" }
     shell: [python3]
     script:
-      - import os, random
+      - import os, random, sys
       - player, darts = os.environ["AGK_PARAM_PLAYER"], int(os.environ["AGK_PARAM_DARTS"])
       - random.seed(player)
       - pi = 4 * sum(random.random() ** 2 + random.random() ** 2 < 1 for _ in range(darts)) / darts
+      - print(f"{player} threw {darts} darts, pi is about {pi}", file=sys.stderr)
       - print(f"{player} threw {darts} darts, pi is about {pi}")
     outputs: [out]
   average:
