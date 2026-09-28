@@ -1,0 +1,36 @@
+apiVersion: agentiik.dev/v1
+kind: Workflow
+metadata: { name: pi, namespace: demo }
+inputs:
+  darts: { schema: { type: integer, minimum: 1 }, default: 100000 }
+outputs:
+  estimates: { from: { step: throw, port: out } }
+  pi: { from: { step: average, port: out } }
+steps:
+  players:
+    image: alpine:3.21
+    script:
+      - printf '{"player":"%s"}\n' ada grace linus alan | /agk/bin/agk emit out
+    outputs: [out]
+  throw:
+    image: python:3.13-alpine
+    needs: [{ step: players, port: out, as: in }]
+    strategy: { fan_out: item }
+    params: { player: "${{ item.data.player }}", darts: "${{ workflow.inputs.darts }}" }
+    shell: [python3]
+    script:
+      - import os, random
+      - player, darts = os.environ["AGK_PARAM_PLAYER"], int(os.environ["AGK_PARAM_DARTS"])
+      - random.seed(player)
+      - pi = 4 * sum(random.random() ** 2 + random.random() ** 2 < 1 for _ in range(darts)) / darts
+      - print(f"{player} threw {darts} darts, pi is about {pi}")
+    outputs: [out]
+  average:
+    image: python:3.13-alpine
+    needs: [{ step: throw, port: out, as: in }]
+    shell: [python3]
+    script:
+      - import json, sys
+      - pis = [float(i["data"]["stdout"].split()[-1]) for i in json.load(sys.stdin)["items"]]
+      - print(sum(pis) / len(pis))
+    outputs: [out]
