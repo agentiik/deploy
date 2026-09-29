@@ -9,7 +9,7 @@ services:
   # Started as root, it takes the group of the Docker socket, drops to uid 65532 and serves. Where
   # it has no identity yet, or where AGENTIIK_API or AGENTIIK_LABELS changed, it joins with the token.
   runner:
-    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.3.0}
+    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.4.0}
     network_mode: host # the API and the bus at the addresses this machine reaches them at; the runner listens on nothing
     userns_mode: host
     restart: unless-stopped
