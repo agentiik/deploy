@@ -47,10 +47,12 @@ jobs:
           sudo install -m 0755 "$RUNNER_TEMP/asciinema" /usr/local/bin/asciinema
           asciinema --version
 
+      # And main as the first branch of a repository, which is what the documentation's examples push, rather than whatever this runner's git names it, which the push prints.
       - name: Git identity
         run: |
           git config --global user.name "Recording"
           git config --global user.email "record@agentiik.invalid"
+          git config --global init.defaultBranch main
 
       # As the single-host workflow chooses: the release compose.yaml names by default where it is published, and otherwise the images of main, tagged dev, with agk from main.
       - name: Choose what to install
@@ -116,6 +118,18 @@ jobs:
           AGENTIIK_TOKEN=$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' ~/agentiik/.env) && export AGENTIIK_TOKEN
           python3 .github/record/cast.py --window "$RECORD_WINDOW" --prompt pi "$RUNNER_TEMP/raw.cast" "$RUNNER_TEMP/agk-server-run"
           cat "$RUNNER_TEMP/agk-server-run/agk-server-run.poster.txt"
+
+      # The three files again, whole and with their digests, since an artifact is read from storage that a machine allowed to read this log may not be allowed to reach, and the digest says whether what it took from the log is what was checked.
+      - name: Print what the site takes
+        run: |
+          cd "$RUNNER_TEMP/agk-server-run"
+          sha256sum agk-server-run.cast agk-server-run.poster.txt agk-server-run.poster.html
+          for f in agk-server-run.cast agk-server-run.poster.txt agk-server-run.poster.html; do
+            echo "--- $f"
+            cat "$f"
+            echo
+            echo "--- end of $f"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
