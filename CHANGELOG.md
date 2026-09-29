@@ -6,8 +6,9 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.4.0, 2026-09-30
 
+- `single-host/` and `runner/` install `v0.4.0`: the images `compose.yaml` names by default, `.env.example`, and the README's downloads, `docker compose ps` and `go install`; "What v0.4 does not do yet" keeps its rows, none of which v0.4.0 delivers. A v0.3.0 installation upgrades with v0.4.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds.
 - The record workflow records `agk push`, `agk run`, `agk status` and `agk logs` against a single-host installation, on a three-step workflow with an input and a fan-out, for the site's home page, and uploads the cast and its poster as the artifact `agk-server-run`; it fails where the recording shows a token, a path of the machine or a host other than `localhost`.
 
 ## v0.3.0, 2026-09-28
