@@ -169,7 +169,7 @@ A workflow is a git repository with an `agentiik.yaml` at its root. `agk push` r
 
 <!-- ci -->
 ```sh
-mkdir -p ~/first-run && cd ~/first-run && git init -q
+mkdir -p ~/first-run && cd ~/first-run && git init -q -b main
 cat > agentiik.yaml <<'EOF'
 apiVersion: agentiik.dev/v1
 kind: Workflow
@@ -202,7 +202,7 @@ cd ~/agentiik
 ```text
 user namespace remapping is off on this daemon and this runner does not require it, so the floor is lifted: ...
 alpine:3.21 resolved to alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
-demo/first-run@9d4e925 pushed to https://localhost:8443
+demo/first-run@9d4e925 pushed to https://localhost:8443 as refs/heads/main
 1 step, 1 file, 0 included files, 0 manifests, 1 tag resolved to its digest
 run 01M3EF42G80SR9XW17YWGEYTTT of demo/first-run@9d4e925 started at https://localhost:8443
     0.6s  greet  succeeded, out 1
@@ -284,7 +284,7 @@ The runner joins at its first start, and restarts with the machine. `docker comp
 
 <!-- ci: direct proxy -->
 ```sh
-mkdir -p ~/on-lab && cd ~/on-lab && git init -q
+mkdir -p ~/on-lab && cd ~/on-lab && git init -q -b main
 cat > agentiik.yaml <<'EOF'
 apiVersion: agentiik.dev/v1
 kind: Workflow
