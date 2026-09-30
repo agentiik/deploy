@@ -6,6 +6,11 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## v0.5.0, 2026-09-30
+
+- `single-host/` and `runner/` install `v0.5.0`: the images `compose.yaml` names by default, still `api` and `controller` beside `runner` and `postgres-upgrade`, `.env.example`, and the README's downloads, `docker compose ps` and `go install`. A v0.4.0 installation upgrades with v0.5.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds.
+- "What v0.5 does not do yet" says the console arrives in v0.6.0, served by the API from the one `agentiik` image that replaces `api` and `controller`, now that its repository has moved into `agentiik`; and that a webhook with `auth: mtls` refuses every caller behind a reverse proxy, since the API trusts no certificate a proxy forwards in a header.
+
 ## v0.4.0, 2026-09-30
 
 - `single-host/` and `runner/` install `v0.4.0`: the images `compose.yaml` names by default, `.env.example`, and the README's downloads, `docker compose ps` and `go install`; "What v0.4 does not do yet" keeps its rows, none of which v0.4.0 delivers. A v0.3.0 installation upgrades with v0.4.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds.
