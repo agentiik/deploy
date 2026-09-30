@@ -23,7 +23,7 @@ In a directory of its own:
 <!-- ci: none -->
 ```sh
 mkdir -p ~/agentiik && cd ~/agentiik
-curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.4.0/single-host/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.5.0/single-host/compose.yaml
 echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" > .env
 export AGENTIIK_TOKEN="$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
 docker compose up -d --wait
@@ -38,7 +38,7 @@ Where `agk` or a runner on another machine reaches the installation, `AGENTIIK_H
 <!-- ci: direct -->
 ```sh
 mkdir -p ~/agentiik && cd ~/agentiik
-curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.4.0/single-host/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.5.0/single-host/compose.yaml
 echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" > .env
 echo 'AGENTIIK_HOST=agentiik.example.com' >> .env
 export AGENTIIK_TOKEN="$(sed -n 's/^AGENTIIK_OPERATOR_TOKEN=//p' .env)"
@@ -52,8 +52,8 @@ Where a reverse proxy on this host terminates TLS in front of the API, `AGENTIIK
 <!-- ci: proxy -->
 ```sh
 mkdir -p ~/agentiik && cd ~/agentiik
-curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.4.0/single-host/compose.yaml
-curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.4.0/single-host/proxy/Caddyfile
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.5.0/single-host/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.5.0/single-host/proxy/Caddyfile
 echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" > .env
 echo 'AGENTIIK_HOST=agentiik.example.com' >> .env
 echo 'AGENTIIK_PROXY_URL=https://agentiik.example.com' >> .env
@@ -92,13 +92,13 @@ docker compose ps --all
 
 ```text
 NAME                          IMAGE                                      COMMAND                  SERVICE            STATUS
-agentiik-api-1                ghcr.io/agentiik/api:v0.4.0                "/agentiik-api serve"    api                Up (healthy)
-agentiik-controller-1         ghcr.io/agentiik/controller:v0.4.0         "/agentiik-controller"   controller         Up
-agentiik-init-1               ghcr.io/agentiik/api:v0.4.0                "/agentiik-api init"     init               Exited (0)
+agentiik-api-1                ghcr.io/agentiik/api:v0.5.0                "/agentiik-api serve"    api                Up (healthy)
+agentiik-controller-1         ghcr.io/agentiik/controller:v0.5.0         "/agentiik-controller"   controller         Up
+agentiik-init-1               ghcr.io/agentiik/api:v0.5.0                "/agentiik-api init"     init               Exited (0)
 agentiik-nats-1               nats:2-alpine                              "docker-entrypoint.s…"   nats               Up (healthy)
 agentiik-postgres-1           postgres:18-alpine                         "docker-entrypoint.s…"   postgres           Up (healthy)
-agentiik-postgres-upgrade-1   ghcr.io/agentiik/postgres-upgrade:v0.4.0   "/usr/local/bin/post…"   postgres-upgrade   Exited (0)
-agentiik-runner-1             ghcr.io/agentiik/runner:v0.4.0             "/usr/local/bin/agk-…"   runner             Up
+agentiik-postgres-upgrade-1   ghcr.io/agentiik/postgres-upgrade:v0.5.0   "/usr/local/bin/post…"   postgres-upgrade   Exited (0)
+agentiik-runner-1             ghcr.io/agentiik/runner:v0.5.0             "/usr/local/bin/agk-…"   runner             Up
 ```
 
 Everything the installation keeps is in `data/`, one directory per service, and the one other path it uses on the host is `/var/lib/agentiik/work`, where the runner lays out each step's files for the daemon to bind.
@@ -107,7 +107,7 @@ Everything the installation keeps is in `data/`, one directory per service, and 
 
 <!-- ci -->
 ```sh
-go install github.com/agentiik/agentiik/cmd/agk@v0.4.0
+go install github.com/agentiik/agentiik/cmd/agk@v0.5.0
 export PATH="$PATH:$(go env GOPATH)/bin"
 mkdir -p trust
 docker compose cp api:/agentiik/trust/agentiik.pem trust/
@@ -270,7 +270,7 @@ Then its own Compose file, [`runner/compose.yaml`](../runner/compose.yaml), and 
 
 <!-- ci: other machine -->
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.4.0/runner/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/v0.5.0/runner/compose.yaml
 cat > .env <<EOF
 AGENTIIK_API=$AGENTIIK_SERVER
 AGENTIIK_JOIN_TOKEN=$JOIN_TOKEN
@@ -339,11 +339,12 @@ sudo rm -rf data /var/lib/agentiik/work
 
 Behind Caddy, `docker rm --force caddy && docker volume rm caddy-data` too.
 
-## What v0.4 does not do yet
+## What v0.5 does not do yet
 
 | What | Today | When |
 | --- | --- | --- |
-| The console | Not part of this stack. | Its own releases. |
+| The console | Not part of this stack: the API serves it from the one `agentiik` image that replaces `api` and `controller`. | v0.6.0 |
 | Object store | On disk in `data/objects`, not MinIO. | v0.9.0 |
 | `network: egress` | Refused rather than opened. | v0.9.0 |
+| A webhook with `auth: mtls` behind [a reverse proxy](#behind-a-reverse-proxy) | Refuses every caller: the API reads the client certificate of the TLS it serves itself, and never one a proxy forwards in a header, which any client could write. Served where the API terminates TLS, as it does [without one](#start). | |
 | A certificate from a public authority | `init` signs its own, unless [a reverse proxy](#behind-a-reverse-proxy) in front serves the API with its own; the bus keeps `init`'s. Yours goes in with `docker compose cp` to `init:/init/api/tls/server.pem` and `server.key`, then `docker compose up -d --force-recreate`: `init` never replaces a certificate it did not issue. | |
