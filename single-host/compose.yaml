@@ -52,8 +52,8 @@ services:
   # bootstrap token's hash in the database until the first administrator has signed in, and a join
   # token for the runner. Its log says what it did.
   init:
-    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.5.0}
-    command: [init]
+    image: ghcr.io/agentiik/agentiik:${AGENTIIK_VERSION:-v0.6.0}
+    command: [agentiik-api, init]
     user: "0:0" # to give each service's directory to the account that service runs as
     network_mode: none
     userns_mode: host
@@ -91,7 +91,8 @@ services:
 
   api:
     <<: *agentiik
-    image: ghcr.io/agentiik/api:${AGENTIIK_VERSION:-v0.5.0}
+    image: ghcr.io/agentiik/agentiik:${AGENTIIK_VERSION:-v0.6.0}
+    command: [agentiik-api, serve] # the API, which serves the web console; the controller below runs the same image
     depends_on: { <<: *after-init, nats: { condition: service_healthy } }
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
@@ -109,17 +110,21 @@ services:
       # Set, the API is reached at the proxy's URL and serves plain HTTP on 127.0.0.1 alone, leaving
       # the two lines above and the certificate unread.
       AGK_PROXY_URL: ${AGENTIIK_PROXY_URL:-}
+      AGK_CONSOLE: ${AGENTIIK_CONSOLE:-on} # off serves the API alone, the sign-in page included
       SSL_CERT_DIR: /agentiik/trust # the certificate init made, beside the system's authorities
     volumes:
       - "${AGENTIIK_DATA:-./data}/api:/agentiik"
       - "${AGENTIIK_DATA:-./data}/bus:/bus"
       - "${AGENTIIK_DATA:-./data}/objects:/objects"
       - "socket:/run/postgresql"
-    healthcheck: { test: [CMD, /agentiik-api, health], interval: 2s } # the image has no shell, hence the exec form
+    healthcheck: { test: [CMD, agentiik-api, health], interval: 2s } # the image has no shell, hence the exec form
 
+  # The API's image, run with the controller's command in a container of its own, which never mounts
+  # the master key the API reads.
   controller:
     <<: *agentiik
-    image: ghcr.io/agentiik/controller:${AGENTIIK_VERSION:-v0.5.0}
+    image: ghcr.io/agentiik/agentiik:${AGENTIIK_VERSION:-v0.6.0}
+    command: [agentiik-controller]
     depends_on: { <<: *after-init, nats: { condition: service_healthy } }
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
