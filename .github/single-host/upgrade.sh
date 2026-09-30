@@ -21,13 +21,18 @@ api() {
   curl -fsS -H "Authorization: Bearer $AGENTIIK_TOKEN" "$AGENTIIK_SERVER$1"
 }
 
-# images_are checks that the installation runs the images of one version, the one it was installed or upgraded to.
+# images_are checks that the installation runs the images of one version, the one it was installed or upgraded to, each the image its compose.yaml names for the service: the API and the controller ran ghcr.io/agentiik/api and controller up to v0.5.0, and one image, ghcr.io/agentiik/agentiik, after it.
 images_are() {
-  local want=$1 service image
-  for service in init:api api:api controller:controller runner:runner; do
-    image=$(cd "$installation" && docker compose ps --all --format '{{.Image}}' "${service%%:*}")
-    if [ "$image" != "ghcr.io/agentiik/${service#*:}:$want" ]; then
-      fail "the service ${service%%:*} runs $image, where ghcr.io/agentiik/${service#*:}:$want was expected"
+  local want=$1 service image named
+  for service in init api controller runner; do
+    image=$(cd "$installation" && docker compose ps --all --format '{{.Image}}' "$service")
+    named=$(cd "$installation" && docker compose config --format json | jq -r --arg service "$service" '.services[$service].image')
+    case $named in
+    ghcr.io/agentiik/*:"$want") ;;
+    *) fail "compose.yaml names $named for the service $service, where an image of ghcr.io/agentiik at $want was expected" ;;
+    esac
+    if [ "$image" != "$named" ]; then
+      fail "the service $service runs $image, where compose.yaml names $named"
     fi
   done
 }

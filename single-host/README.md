@@ -80,6 +80,21 @@ docker compose up -d --wait
 
 Each passes a step's log stream on as it is written, the path undecoded (an artifact's URI is one segment whose slashes are `%2F`), and bodies of any size (a runner uploads artifacts of up to 5 GiB). Open the proxy's 443 and the bus's 4222, and nothing else.
 
+### Trying main
+
+`compose.yaml` on `main` names the release being prepared, whose images are published only once it is tagged. To try it before then, download it from `main` rather than from a release tag, follow `dev`, the images `main` publishes at every commit, and install `agk` from `main` too:
+
+```sh
+mkdir -p ~/agentiik && cd ~/agentiik
+curl -fsSLO https://raw.githubusercontent.com/agentiik/deploy/main/single-host/compose.yaml
+echo "AGENTIIK_OPERATOR_TOKEN=$(openssl rand -hex 32)" > .env
+echo 'AGENTIIK_VERSION=dev' >> .env
+docker compose pull && docker compose up -d --wait
+go install github.com/agentiik/agentiik/cmd/agk@main
+```
+
+`docker compose up` never pulls again an image it holds, so run `docker compose pull` before it each time to take what `main` has published since. The web console is at the installation's address, `https://localhost:8443` here, and signs in as [The first administrator](#the-first-administrator) says.
+
 ### What runs
 
 `postgres-upgrade` and `init` run first at every `docker compose up`: the one upgrades PostgreSQL's data where a release moves it to a new major version, the other brings the installation in line with `.env`, and the other services wait for them.
