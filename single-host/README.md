@@ -160,6 +160,7 @@ The token in `.env` is the bootstrap token. It administers the installation and 
 agk user create alice --admin
 ```
 <!-- ci: check first-admin -->
+<!-- ci: check console -->
 
 ```text
 alice is an administrator with no credential yet. Open this link once, before 10:15 UTC, to enrol a passkey, or a password where the installation allows one:
