@@ -12,6 +12,7 @@ Every repository of the project carries the same version and is tagged at the sa
 - The API serves the web console at the installation's address. `AGENTIIK_CONSOLE=off` in `.env`, which `compose.yaml` hands the API as `AGK_CONSOLE`, serves the API alone, the sign-in page included.
 - The single-host README says how to try `main` before its release: `compose.yaml` downloaded from `main`, `AGENTIIK_VERSION=dev`, `docker compose pull` before each `up`, and `agk` from `main`.
 - The `upgrade` job checks that each service runs the image its `compose.yaml` names for it at the version expected, rather than an image named after the service, since the API and the controller ran `api` and `controller` up to v0.5.0 and run `agentiik` after it. The workflow reads whether a version is published from `ghcr.io/agentiik/agentiik`.
+- The `single-host` workflow checks the web console in each of its three modes, on its own and behind Caddy: its page at the root of the installation's address, carrying `<base href="/">`, and at an address of its own below it, each file the page names served with its type, a `POST` there answered 404; then, with `AGENTIIK_CONSOLE=off` in `.env`, every one of those addresses answered 404 while the sign-in page and the API still answer, and the console served again once the line is taken out.
 
 ## v0.5.0, 2026-09-30
 
