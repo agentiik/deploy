@@ -24,7 +24,7 @@ ARTIFACT = "/api/v1/artifacts/agk%3A%2F%2Frun%2F01ABC%2Fgreet%2Fout%2Fgreeting.t
 STREAM = "/api/v1/runs/01ABC/steps/greet/logs"
 UPLOAD = "/objects/demo"
 UPLOAD_BYTES = 64 << 20  # above nginx's default of 1 MiB, and Caddy's and Traefik's none
-LIVE = "/api/v1/live"
+LIVE = "/api/v1/me/live"
 MESSAGE = b'{"kind":"all"}'
 
 
