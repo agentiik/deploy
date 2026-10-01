@@ -408,8 +408,9 @@ jobs:
           docker compose -p agentiik logs --no-color --tail 200 || true
 
   # Each file in single-host/proxy/, run as its comments say in front of a stand-in for the API,
-  # which checks what the API asks of a proxy: %2F passed undecoded, a log stream not buffered, and
-  # an upload over nginx's default size. The README job runs Caddy in front of the real API.
+  # which checks what the API asks of a proxy: %2F passed undecoded, a log stream not buffered, an
+  # upload over nginx's default size, and the live connection's WebSocket upgraded. The README job
+  # runs Caddy in front of the real API.
   proxies:
     runs-on: ubuntu-latest
     timeout-minutes: 15
