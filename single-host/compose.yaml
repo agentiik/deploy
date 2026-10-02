@@ -20,7 +20,7 @@ services:
   # major version than the one below, it upgrades it with pg_upgrade and keeps the old cluster beside
   # it, as postgres-17 from 17, the way back; anything else it leaves as it is. Its log says what it did.
   postgres-upgrade:
-    image: ghcr.io/agentiik/postgres-upgrade:${AGENTIIK_VERSION:-v0.5.0}
+    image: ghcr.io/agentiik/postgres-upgrade:${AGENTIIK_VERSION:-v0.6.0}
     command: [/data/postgres, "18"] # the cluster, and the major version of the postgres image below, which it upgrades it to
     network_mode: none
     userns_mode: host # the cluster belongs to uid 70, PostgreSQL's account, which a daemon that remaps user namespaces would map elsewhere
@@ -143,7 +143,7 @@ services:
   # the pool default with the token init wrote where it has no identity yet, or where AGK_API changed.
   runner:
     <<: *agentiik
-    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.5.0}
+    image: ghcr.io/agentiik/runner:${AGENTIIK_VERSION:-v0.6.0}
     depends_on: { <<: *after-init, api: { condition: service_healthy } }
     cap_drop: [ALL]
     cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
