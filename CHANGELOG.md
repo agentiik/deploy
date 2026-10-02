@@ -6,7 +6,7 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.6.0, 2026-10-02
 
 - `single-host/proxy/nginx.conf` passes on the web console's live connection, the WebSocket `GET /api/v1/me/live` opens: a `map` named for the file sets `Connection` from the request's `Upgrade`, which the server block passes on, since nginx drops both hop-by-hop headers otherwise; Caddy and Traefik pass a WebSocket on as they are. The `proxies` job's stand-in answers the handshake only where the proxy passed the upgrade on, and checks through each of the three proxies that it is upgraded and its first message arrives. The single-host README says what an nginx configuration copied before v0.6.0 needs.
 - `single-host/compose.yaml` runs `init`, the API and the controller from one image, `ghcr.io/agentiik/agentiik`, which names v0.6.0 by default: each service gives its program as its command, `agentiik-api init`, `agentiik-api serve` and `agentiik-controller`, since the image has no entrypoint, and the controller keeps a container of its own, which never mounts the master key the API reads. The API's health check is `[CMD, agentiik-api, health]`. `runner` and `postgres-upgrade` keep their images, at v0.5.0 until v0.6.0 is published. A v0.5.0 installation upgrades with this `compose.yaml` and its own `.env`, as the `upgrade` job holds.
@@ -14,6 +14,9 @@ Every repository of the project carries the same version and is tagged at the sa
 - The single-host README says how to try `main` before its release: `compose.yaml` downloaded from `main`, `AGENTIIK_VERSION=dev`, `docker compose pull` before each `up`, and `agk` from `main`.
 - The `upgrade` job checks that each service runs the image its `compose.yaml` names for it at the version expected, rather than an image named after the service, since the API and the controller ran `api` and `controller` up to v0.5.0 and run `agentiik` after it. The workflow reads whether a version is published from `ghcr.io/agentiik/agentiik`.
 - The `single-host` workflow checks the web console in each of its three modes, on its own and behind Caddy: its page at the root of the installation's address, carrying `<base href="/">`, and at an address of its own below it, each file the page names served with its type, a `POST` there answered 404; then, with `AGENTIIK_CONSOLE=off` in `.env`, every one of those addresses answered 404 while the sign-in page and the API still answer, and the console served again once the line is taken out.
+- `single-host/` and `runner/` install `v0.6.0`: the images `compose.yaml` names by default, `agentiik` for `init`, the API and the controller beside `runner` and `postgres-upgrade`, `runner/.env.example`, and the README's downloads, `docker compose ps` and `go install`. A v0.5.0 installation upgrades with v0.6.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds.
+- "What v0.6 does not do yet" no longer lists the console, which the API serves at the installation's address.
+- `CLAUDE.md` is the copy of `agentiik/.github`'s as it stands at v0.6.0: twelve repositories, the web console part of `agentiik`, and the roadmap at 685 tasks in sixty-three groups.
 
 ## v0.5.0, 2026-09-30
 
