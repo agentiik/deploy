@@ -16,6 +16,7 @@ Every repository of the project carries the same version and is tagged at the sa
 - The `single-host` workflow checks the web console in each of its three modes, on its own and behind Caddy: its page at the root of the installation's address, carrying `<base href="/">`, and at an address of its own below it, each file the page names served with its type, a `POST` there answered 404; then, with `AGENTIIK_CONSOLE=off` in `.env`, every one of those addresses answered 404 while the sign-in page and the API still answer, and the console served again once the line is taken out.
 - `single-host/` and `runner/` install `v0.6.0`: the images `compose.yaml` names by default, `agentiik` for `init`, the API and the controller beside `runner` and `postgres-upgrade`, `runner/.env.example`, and the README's downloads, `docker compose ps` and `go install`. A v0.5.0 installation upgrades with v0.6.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds.
 - "What v0.6 does not do yet" no longer lists the console, which the API serves at the installation's address.
+- `CLAUDE.md` is the copy of `agentiik/.github`'s as it stands at v0.6.0: twelve repositories, the web console part of `agentiik`, and the roadmap at 685 tasks in sixty-three groups.
 
 ## v0.5.0, 2026-09-30
 
