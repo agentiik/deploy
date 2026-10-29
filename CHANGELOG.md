@@ -6,8 +6,9 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
-## Unreleased
+## v0.7.0, 2026-10-30
 
+- `single-host/` and `runner/` install `v0.7.0`: the images `compose.yaml` names by default, `agentiik` for `init`, the API and the controller beside `runner` and `postgres-upgrade`, `AGENTIIK_VERSION` in both `.env.example`, and the README's downloads, `docker compose ps` and `go install`. A v0.6.0 installation upgrades with v0.7.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds. The README's "What v0.7 does not do yet" lists what it listed at v0.6, none of it v0.7.0's.
 - The single-host README says what an nginx configuration copied before v0.6.0 without the `map` and the `Upgrade` and `Connection` lines does to the web console: its pages are not updated as runs change, and are current only once reloaded. It said the console says it is not live, which the console no longer draws.
 - `CLAUDE.md` is the copy of `agentiik/.github`'s, which no longer counts the roadmap's tasks, groups or Feature issues: the roadmap counts them in each milestone's tally, and the 685 tasks the copy named were already 696 at the v0.6.0 documentation.
 
