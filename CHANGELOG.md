@@ -9,6 +9,7 @@ Every repository of the project carries the same version and is tagged at the sa
 ## Unreleased
 
 - The single-host README says what an nginx configuration copied before v0.6.0 without the `map` and the `Upgrade` and `Connection` lines does to the web console: its pages are not updated as runs change, and are current only once reloaded. It said the console says it is not live, which the console no longer draws.
+- `CLAUDE.md` is the copy of `agentiik/.github`'s, which no longer counts the roadmap's tasks, groups or Feature issues: the roadmap counts them in each milestone's tally, and the 685 tasks the copy named were already 696 at the v0.6.0 documentation.
 
 ## v0.6.0, 2026-10-02
 
