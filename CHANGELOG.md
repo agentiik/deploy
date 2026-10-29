@@ -6,6 +6,10 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## Unreleased
+
+- The single-host README says what an nginx configuration copied before v0.6.0 without the `map` and the `Upgrade` and `Connection` lines does to the web console: its pages are not updated as runs change, and are current only once reloaded. It said the console says it is not live, which the console no longer draws.
+
 ## v0.6.0, 2026-10-02
 
 - `single-host/proxy/nginx.conf` passes on the web console's live connection, the WebSocket `GET /api/v1/me/live` opens: a `map` named for the file sets `Connection` from the request's `Upgrade`, which the server block passes on, since nginx drops both hop-by-hop headers otherwise; Caddy and Traefik pass a WebSocket on as they are. The `proxies` job's stand-in answers the handshake only where the proxy passed the upgrade on, and checks through each of the three proxies that it is upgraded and its first message arrives. The single-host README says what an nginx configuration copied before v0.6.0 needs.
