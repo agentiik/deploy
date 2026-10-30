@@ -367,7 +367,7 @@ jobs:
           docker compose up -d --no-deps --wait api controller runner || fail "the API, the controller and the runner did not come up on the images of dev with the settings they had, as the output above says"
           date -u +%s > "$state/upgraded-at"
           docker compose ps --all
-          images_are latest
+          # init keeps the image it ran, which the tag no longer names, so images_are, which holds init to it too, is not asked here.
           for service in api controller runner; do
             image=$(docker inspect -f '{{.Image}}' "$(docker compose ps -q "$service")")
             want=$(docker image inspect -f '{{.Id}}' "ghcr.io/agentiik/$([ "$service" = runner ] && echo runner || echo agentiik):dev")
