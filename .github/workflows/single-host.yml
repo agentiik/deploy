@@ -190,14 +190,14 @@ jobs:
           docker exec machine2 docker compose -p agentiik-runner logs --no-color --tail 200 || true
           docker logs caddy || true
 
-  # Upgrading a deployment is replacing compose.yaml and editing .env, then docker compose pull and up: nothing else, no file moved, no volume migrated, no command run by hand. The job installs a deployment as a person did, runs a two-step workflow on it, upgrades it that way to this checkout's compose.yaml, and checks that the operator token is still accepted, the earlier run still reads as it did with its outputs and its artifact, a runner is ready, and the same workflow runs again. release starts from the latest release of this repository, as its README installed it; latest-to-dev from that release's compose.yaml following latest, to this one following dev, since latest is what that compose.yaml was released with. Where the upgrade moves PostgreSQL to a new major version, the job checks that it runs it and that the previous cluster is kept beside it. A release whose layout this compose.yaml cannot start on fails the job, which is what it is for.
+  # Upgrading a deployment is replacing compose.yaml and editing .env, then docker compose pull and up: nothing else, no file moved, no volume migrated, no command run by hand. The job installs a deployment as a person did, runs a two-step workflow on it, upgrades it that way to this checkout's compose.yaml, and checks that the operator token is still accepted, the earlier run still reads as it did with its outputs and its artifact, a runner is ready, and the same workflow runs again. release starts from the latest release of this repository, as its README installed it; latest-to-dev from that release's compose.yaml following latest, to this one following dev, since latest is what that compose.yaml was released with; updater from the same, upgraded as an updater following a tag upgrades it, such as Watchtower: the images of dev pulled under the tag latest, and each container that runs replaced on its new image with the settings it had, compose.yaml and .env as they were. init has exited by then, so nothing replaces it and no init runs, and the API and the controller apply the migrations their database lacks themselves. Where the upgrade moves PostgreSQL to a new major version, the job checks that it runs it and that the previous cluster is kept beside it. A release whose layout this compose.yaml cannot start on fails the job, which is what it is for.
   upgrade:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        variant: [release, latest-to-dev]
+        variant: [release, latest-to-dev, updater]
     name: upgrade (${{ matrix.variant }})
     defaults:
       run:
@@ -254,6 +254,19 @@ jobs:
               echo "TO_IMAGES=dev"
               echo "TO_AGK=main"
               echo "TO_ENV_VERSION=dev"
+              echo "TO_SHELL_VERSION="
+            } >> "$GITHUB_ENV"
+            ;;
+          updater)
+            echo "Upgrading $from's compose.yaml following latest as an updater does, to the dev images of main under the tag latest"
+            {
+              echo "FROM_LABEL=$from's compose.yaml following latest, as an updater does"
+              echo "FROM_IMAGES=latest"
+              echo "FROM_AGK=latest"
+              echo "FROM_ENV_VERSION=latest"
+              echo "TO_IMAGES=latest"
+              echo "TO_AGK=main"
+              echo "TO_ENV_VERSION="
               echo "TO_SHELL_VERSION="
             } >> "$GITHUB_ENV"
             ;;
@@ -327,6 +340,7 @@ jobs:
 
       # What a person does: the new compose.yaml in place of the old one, AGENTIIK_VERSION edited in .env where they follow a channel, then pull and up. agk is upgraded the way it was installed.
       - name: Upgrade with compose.yaml and .env alone
+        if: matrix.variant != 'updater'
         run: |
           . .github/single-host/upgrade.sh
           cd "$installation"
@@ -338,6 +352,28 @@ jobs:
           date -u +%s > "$state/upgraded-at"
           docker compose ps --all
           images_are "$TO_IMAGES"
+          go install "github.com/agentiik/agentiik/cmd/agk@$TO_AGK"
+
+      # What an updater following a tag does: it pulls what the tag names now and replaces each container that runs with one of the new image and the settings it had. postgres-upgrade and init have exited, so nothing replaces them, and the API and the controller start on a database init has not migrated.
+      - name: Upgrade as an updater does
+        if: matrix.variant == 'updater'
+        run: |
+          . .github/single-host/upgrade.sh
+          cd "$installation"
+          for image in agentiik runner; do
+            docker pull -q "ghcr.io/agentiik/$image:dev" || fail "ghcr.io/agentiik/$image:dev could not be pulled"
+            docker tag "ghcr.io/agentiik/$image:dev" "ghcr.io/agentiik/$image:latest"
+          done
+          docker compose up -d --no-deps --wait api controller runner || fail "the API, the controller and the runner did not come up on the images of dev with the settings they had, as the output above says"
+          date -u +%s > "$state/upgraded-at"
+          docker compose ps --all
+          images_are latest
+          for service in api controller runner; do
+            image=$(docker inspect -f '{{.Image}}' "$(docker compose ps -q "$service")")
+            want=$(docker image inspect -f '{{.Id}}' "ghcr.io/agentiik/$([ "$service" = runner ] && echo runner || echo agentiik):dev")
+            if [ "$image" != "$want" ]; then fail "the service $service runs $image, where the image of dev is $want"; fi
+          done
+          docker compose logs --no-color api controller | grep 'applied a migration the database lacked' || echo "The database lacked no migration of dev"
           go install "github.com/agentiik/agentiik/cmd/agk@$TO_AGK"
 
       - name: Check what the upgrade kept
