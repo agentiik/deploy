@@ -6,6 +6,12 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## v0.7.1, 2026-10-30
+
+- `single-host/` and `runner/` install `v0.7.1`: the images `compose.yaml` names by default, `AGENTIIK_VERSION` in both `.env.example`, and the README's downloads, `docker compose ps` and `go install`.
+- `single-host/compose.yaml` gives the API and the controller `AGK_MIGRATE_DATABASE_URL`, `init`'s own connection, which they open only to apply a migration the database lacks before they start, so that an installation an updater upgrades without `init` starts on its own (agentiik/agentiik#927). A `compose.yaml` from before gives them none, and they fall back to the same connection over the local socket.
+- The `upgrade` job upgrades the latest release a third way, `updater`: as Watchtower does, the images of `dev` pulled under `latest` and the containers that run replaced with the settings they had, so that `init` never runs. The README's Upgrade says so.
+
 ## v0.7.0, 2026-10-30
 
 - `single-host/` and `runner/` install `v0.7.0`: the images `compose.yaml` names by default, `agentiik` for `init`, the API and the controller beside `runner` and `postgres-upgrade`, `AGENTIIK_VERSION` in both `.env.example`, and the README's downloads, `docker compose ps` and `go install`. A v0.6.0 installation upgrades with v0.7.0's `compose.yaml` and its own `.env`, as the `upgrade` job holds. The README's "What v0.7 does not do yet" lists what it listed at v0.6, none of it v0.7.0's.
