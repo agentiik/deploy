@@ -97,6 +97,8 @@ services:
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
       AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
+      # init's, which the API applies the migrations its database lacks as before it serves: an updater that replaces the containers that run, following a tag, runs no init, since init has exited.
+      AGK_MIGRATE_DATABASE_URL: postgres://postgres@/agentiik?host=/run/postgresql
       AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:${AGENTIIK_BUS_PORT:-4222} # the address every runner is handed too, on the certificate
       AGK_BUS_CREDENTIALS_FILE: /bus/control-plane.creds # the API renews it here, 14 days before its end; the controller reads it
       AGK_BUS_ACCOUNT_SEED_FILE: /agentiik/bus/account.seed
@@ -129,6 +131,7 @@ services:
     environment:
       AGK_DATABASE_URL: postgres://agentiik@/agentiik?host=/run/postgresql
       AGK_DATABASE_PASSWORD_FILE: /agentiik/database-password
+      AGK_MIGRATE_DATABASE_URL: postgres://postgres@/agentiik?host=/run/postgresql # as the API's
       AGK_BUS_URL: tls://${AGENTIIK_HOST:-localhost}:${AGENTIIK_BUS_PORT:-4222}
       AGK_BUS_CREDENTIALS_FILE: /bus/control-plane.creds
       AGK_OBJECTS_DIR: /objects
