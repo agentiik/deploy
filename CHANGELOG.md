@@ -6,6 +6,10 @@ Every repository of the project carries the same version and is tagged at the sa
 
 `0.y.z` promises nothing beyond itself: what a release here describes may be gone in the next one.
 
+## v0.7.3, 2026-10-31
+
+- `single-host/` and `runner/` install `v0.7.3`: the images `compose.yaml` names by default, `AGENTIIK_VERSION` in both `.env.example`, and the README's downloads, `docker compose ps` and `go install`.
+
 ## v0.7.2, 2026-10-30
 
 - `single-host/` and `runner/` install `v0.7.2`: the images `compose.yaml` names by default, `AGENTIIK_VERSION` in both `.env.example`, and the README's downloads, `docker compose ps` and `go install`.
